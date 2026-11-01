@@ -1,0 +1,31 @@
+# Camp Fire. Odpalaj z tego katalogu na hoście: just <zadanie>
+#
+# Pliki .data zostają w kontenerze (/tmp/wildfire). gif czyta je stamtąd
+# i zapisuje tylko animacje do anim/.
+
+container := env_var_or_default("IGA_CONTAINER", "iga-ads-dev")
+results := "/tmp/wildfire"
+build_dir := env_var_or_default("IGA_BUILD", "/build")
+fire_dir := "/code/examples/fire"
+
+default:
+    @just --list
+
+# Złóż fire.gif, fuel.gif i wind.gif oraz klatki PNG, czytając /tmp/wildfire w kontenerze
+gif:
+    python3 {{justfile_directory()}}/animate.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
+
+# Skopiuj fire.cpp i fire.hpp do kontenera pod tymi samymi nazwami i przebuduj
+rebuild:
+    docker cp {{justfile_directory()}}/fire.cpp {{container}}:{{fire_dir}}/fire.cpp
+    docker cp {{justfile_directory()}}/fire.hpp {{container}}:{{fire_dir}}/fire.hpp
+    docker exec {{container}} cmake --build {{build_dir}} --target ads.example.fire -j
+
+# Załóż /tmp/wildfire w kontenerze i odpal symulację; pliki .data zostają tam
+run n="80" p="2":
+    docker exec {{container}} mkdir -p {{results}}
+    docker exec --workdir {{results}} {{container}} bash -lc '/build/bin/fire {{n}} {{p}} "$(nproc)"'
+
+# Usuń katalog wyników /tmp/wildfire w kontenerze
+clean:
+    docker exec {{container}} rm -rf {{results}}
