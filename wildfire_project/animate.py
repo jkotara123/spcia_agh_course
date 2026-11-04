@@ -91,8 +91,8 @@ class DataSource:
         return sorted(steps)
 
     def read_params(self):
-        """params.txt z fire (nazwa=wartość); pusty słownik, gdy go nie ma."""
-        path = f"{self.data_dir}/params.txt"
+        """params.csv z fire (nagłówek + wiersz wartości); pusty słownik, gdy go nie ma."""
+        path = f"{self.data_dir}/params.csv"
         try:
             if self.container:
                 text = subprocess.check_output(["docker", "exec", self.container, "cat", path],
@@ -101,7 +101,8 @@ class DataSource:
                 text = Path(path).read_text()
         except (subprocess.CalledProcessError, OSError):
             return {}
-        return dict(line.split("=", 1) for line in text.split() if "=" in line)
+        lines = text.split()
+        return dict(zip(lines[0].split(","), lines[1].split(","))) if len(lines) >= 2 else {}
 
     def read_frame(self, prefix, step):
         name = f"{prefix}_{step}.data"

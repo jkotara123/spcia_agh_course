@@ -51,13 +51,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Zapis obok wyników, żeby animate.py znało dt, a każdy przebieg miał opis
-    std::ofstream info{"params.txt"};
+    // params.csv obok wyników (nagłówek + jeden wiersz): opis przebiegu, animate.py bierze z niego dt
+    std::ofstream info{"params.csv"};
+    info << "N,p";
     for (auto& [k, v] : real)
-        info << k << '=' << *v << '\n';
+        info << ',' << k;
     for (auto& [k, v] : whole)
-        info << k << '=' << *v << '\n';
-    info << "N=" << n << "\np=" << p << '\n';
+        info << ',' << k;
+    info << '\n' << n << ',' << p;
+    for (auto& [k, v] : real)
+        info << ',' << *v;
+    for (auto& [k, v] : whole)
+        info << ',' << *v;
+    info << '\n';
 
     // Camp Fire: kwadrat [0, 100]^2 = 30 x 30 km (x na wschód, y na północ).
     // t in [0, 10] to 8 XI 2018 6:25-11:25 (1 jednostka czasu = 0,5 h), patrz fire.hpp.

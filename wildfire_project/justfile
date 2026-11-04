@@ -1,7 +1,9 @@
 # Camp Fire. Odpalaj z tego katalogu na hoście: just <zadanie>
 #
-# Pliki .data zostają w kontenerze (/tmp/wildfire). gif czyta je stamtąd
-# i zapisuje tylko animacje do anim/.
+# Każde just run to nowy przebieg run_<data>_<godzina>:
+#   w kontenerze  /tmp/wildfire/run_.../   pliki .data i params.csv (/tmp/wildfire/latest = ostatni)
+#   na hoście     przebiegi/run_.../       params.csv, potem animacje (just gif) i porównanie (just porownaj)
+#   na hoście     przebiegi/przebiegi.csv  jeden wiersz na przebieg: parametry, czas, wyniki porównania
 
 container := env_var_or_default("IGA_CONTAINER", "iga-ads-dev")
 results := "/tmp/wildfire"
@@ -11,6 +13,7 @@ fire_dir := "/code/examples/fire"
 n := "80"
 p := "2"
 python := env_var_or_default("PYTHON", "python3")
+runs := justfile_directory() / "przebiegi"
 
 default:
     @just --list
@@ -20,13 +23,24 @@ kontener:
     docker run -d --name {{container}} iga-ads:latest sleep infinity
     docker exec {{container}} just config
 
-# Złóż fire.gif, fuel.gif i wind.gif oraz klatki PNG, czytając /tmp/wildfire w kontenerze
-gif:
-    {{python}} {{justfile_directory()}}/animate.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
+# Animacje fire.gif, fuel.gif, wind.gif i klatki PNG do przebiegi/<run>/ (domyślnie ostatni przebieg)
+gif run="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=$(docker exec {{container}} readlink -f "{{results}}/{{run}}" | xargs basename)
+    {{python}} {{justfile_directory()}}/animate.py --docker {{container}} --data "{{results}}/$name" --out "{{runs}}/$name"
 
-# Porównaj ostatni przebieg z obserwacjami NIST: liczby + anim/porownanie_nist.png
-porownaj:
-    {{python}} {{justfile_directory()}}/porownaj_nist.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
+# Porównanie z NIST: liczby, przebiegi/<run>/porownanie_nist.png i porownanie.csv, wiersz w przebiegi.csv
+porownaj run="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=$(docker exec {{container}} readlink -f "{{results}}/{{run}}" | xargs basename)
+    {{python}} {{justfile_directory()}}/porownaj_nist.py --docker {{container}} --data "{{results}}/$name" \
+        --out "{{runs}}/$name" --index "{{runs}}/przebiegi.csv" --run "$name"
+
+# Tabela wszystkich przebiegów (przebiegi/przebiegi.csv)
+przebiegi:
+    @column -s, -t < {{runs}}/przebiegi.csv
 
 # Przelicz dane NIST/LANDFIRE/OSM/Jarbo Gap na camp_fire_data.hpp i model_data.json
 dane:
@@ -39,13 +53,37 @@ rebuild:
     docker cp {{justfile_directory()}}/camp_fire_data.hpp {{container}}:{{fire_dir}}/camp_fire_data.hpp
     docker exec {{container}} cmake --build {{build_dir}} --target ads-example-fire -j
 
-# Odpal symulację w /tmp/wildfire (stare .data usuwa). Parametry jak w fire_params w fire.hpp, np.
+# Nowy przebieg run_<data>_<godzina>. Parametry jak w fire_params w fire.hpp, np.
 #   just run TU=0.6 GR=0.9      just run cw=1.0 rad=0.13      just run t_end=4   (tylko do 8:25)
 run *args:
-    docker exec {{container}} bash -c 'mkdir -p {{results}} && rm -f {{results}}/*.data'
-    docker exec --workdir {{results}} {{container}} bash -lc 'time /build/examples/fire {{n}} {{p}} "$(nproc)" {{args}} | grep -v "^Step"'
-    docker exec {{container}} cat {{results}}/params.txt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="run_$(date +%Y%m%d_%H%M%S)"
+    dir="{{results}}/$name"
+    docker exec {{container}} mkdir -p "$dir"
+    trap 'docker exec {{container}} rm -rf "$dir"' ERR
+    echo "przebieg $name"
+    start=$SECONDS
+    docker exec --workdir "$dir" {{container}} bash -lc \
+        'set -o pipefail; /build/examples/fire {{n}} {{p}} "$(nproc)" {{args}} 2>&1 | { grep -v -e "^Step" -e "Numa" || true; }'
+    secs=$((SECONDS - start))
+    docker exec {{container}} ln -sfn "$name" "{{results}}/latest"
+    mkdir -p "{{runs}}/$name"
+    docker cp -q "{{container}}:$dir/params.csv" "{{runs}}/$name/params.csv"
+    header=$(head -1 "{{runs}}/$name/params.csv")
+    values=$(tail -1 "{{runs}}/$name/params.csv")
+    index="{{runs}}/przebiegi.csv"
+    if [ ! -f "$index" ]; then
+        echo "run,czas_s,argumenty,$header" > "$index"
+    elif ! head -1 "$index" | grep -q "^run,czas_s,argumenty,$header"; then
+        echo "uwaga: inne kolumny parametrów niż w $index (zmienił się fire_params?)" >&2
+    fi
+    args="{{args}}"
+    echo "$name,$secs,${args:--},$values" >> "$index"
+    echo "gotowe w ${secs} s: $dir (kontener), {{runs}}/$name (params.csv)"
+    paste -d= <(tr , '\n' <<< "$header") <(tr , '\n' <<< "$values") | paste -sd' ' -
 
-# Usuń katalog wyników /tmp/wildfire w kontenerze
+# Usuń z kontenera pliki .data wszystkich przebiegów poza ostatnim (każdy to ok. 400 MB)
 clean:
-    docker exec {{container}} rm -rf {{results}}
+    docker exec {{container}} bash -c 'cd {{results}} && rm -f *.data params.txt && \
+        ls -d run_* 2>/dev/null | grep -vx "$(readlink latest)" | xargs -r rm -rf'

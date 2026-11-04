@@ -14,7 +14,9 @@ Wypisuje:
     spalone      - jaka część palnego obszaru spłonęła w symulacji
     poza NIST    - jaka część spalonego jest dalej niż 1,5 km od jakiejkolwiek obserwacji NIST
     miejscowości - kiedy ogień doszedł do Concow, Magalia, Paradise (symulacja i NIST)
-Rysuje porownanie_nist.png: mapa czasu dojścia ognia w symulacji z punktami NIST.
+Rysuje porownanie_nist.png: mapa czasu dojścia ognia w symulacji z punktami NIST,
+zapisuje porownanie.csv (te same liczby) i z --index/--run dopisuje je do wiersza przebiegu
+we wspólnej tabeli przebiegi.csv.
 """
 
 import argparse
@@ -72,6 +74,8 @@ def main():
     p.add_argument("--out", type=Path, default=HERE / "anim")
     p.add_argument("--every", type=int, default=1, help="co który plik fuel_*.data czytać")
     p.add_argument("--model", type=Path, default=HERE / "model_data.json")
+    p.add_argument("--index", type=Path, help="przebiegi.csv: dopisz wyniki do wiersza --run")
+    p.add_argument("--run", default="", help="nazwa przebiegu (run_...) w --index")
     args = p.parse_args()
     animate.load_model(args.model)
 
@@ -97,22 +101,42 @@ def main():
     for x, y in zip(nx_, ny_):
         far &= (gx - x) ** 2 + (gy - y) ** 2 > radius ** 2
 
+    scores = {
+        "trafione_%": round(hit.mean() * 100, 1),
+        "na_czas_%": round(on_time.sum() / len(nt) * 100, 1),
+        "opoznienie_min": round(float(np.median(delay)), 0) if hit.any() else np.nan,
+        "spalone_%": round(burned[burnable].mean() * 100, 1),
+        "poza_nist_%": round((burned & far).sum() / max(burned.sum(), 1) * 100, 1),
+    }
     print(f"obserwacje NIST w kwadracie do t = {t_end:g}: {len(nt)}")
-    print(f"trafione:    {hit.mean() * 100:5.1f}%")
-    print(f"na czas:     {(hit.sum() and on_time.sum() / len(nt)) * 100:5.1f}%  (do {ON_TIME_MIN} min po NIST)")
+    print(f"trafione:    {scores['trafione_%']:5.1f}%")
+    print(f"na czas:     {scores['na_czas_%']:5.1f}%  (do {ON_TIME_MIN} min po NIST)")
     if hit.any():
-        print(f"opóźnienie:  mediana {np.median(delay):+.0f} min  (ujemne = symulacja szybsza)")
-    print(f"spalone:     {burned[burnable].mean() * 100:5.1f}% palnego obszaru")
-    print(f"poza NIST:   {(burned & far).sum() / max(burned.sum(), 1) * 100:5.1f}% spalonego "
-          f"(dalej niż {FAR_KM} km od obserwacji)")
+        print(f"opóźnienie:  mediana {scores['opoznienie_min']:+.0f} min  (ujemne = symulacja szybsza)")
+    print(f"spalone:     {scores['spalone_%']:5.1f}% palnego obszaru")
+    print(f"poza NIST:   {scores['poza_nist_%']:5.1f}% spalonego (dalej niż {FAR_KM} km od obserwacji)")
     print("miejscowości (symulacja / NIST):")
+    fmt = lambda t: animate.clock(t) if np.isfinite(t) else "-"
     for name, (x, y) in animate.MODEL["towns"].items():
         near = (gx - x) ** 2 + (gy - y) ** 2 < TOWN_RADIUS ** 2
         t_sim = arrival[near].min()
         near_n = (nx_ - x) ** 2 + (ny_ - y) ** 2 < TOWN_RADIUS ** 2
         t_obs = nt[near_n].min() if near_n.any() else np.inf
-        fmt = lambda t: animate.clock(t) if np.isfinite(t) else "  -  "
-        print(f"  {name:9s} {fmt(t_sim)} / {fmt(t_obs)}")
+        scores[name] = fmt(t_sim)
+        print(f"  {name:9s} {fmt(t_sim):>5s} / {fmt(t_obs)}")
+
+    pd = nist_viz.pd
+    args.out.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([scores]).to_csv(args.out / "porownanie.csv", index=False)
+    if args.index and args.run and args.index.exists():
+        table = pd.read_csv(args.index, dtype=str)
+        if (table["run"] == args.run).any():
+            for key, value in scores.items():
+                if key not in table:
+                    table[key] = ""
+                table.loc[table["run"] == args.run, key] = str(value)
+            table.to_csv(args.index, index=False)
+            print(f"wyniki dopisane do {args.index}")
 
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(7.5, 6.5))
@@ -128,7 +152,6 @@ def main():
     ax.set_xlabel("x (wschód) [1 = 300 m]")
     ax.set_ylabel("y (północ)")
     fig.tight_layout()
-    args.out.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out / "porownanie_nist.png", dpi=120)
     print(f"mapa: {args.out / 'porownanie_nist.png'}")
 

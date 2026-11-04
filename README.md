@@ -77,15 +77,48 @@ just gif
 just porownaj
 ```
 
-`just run` liczy symulację w kontenerze (ok. 45 s). `just gif` składa animacje w `anim/`,
-a `just porownaj` porównuje wynik z NIST.
+`just run` liczy symulację w kontenerze (ok. 45 s) jako nowy przebieg `run_<data>_<godzina>`.
+`just gif` i `just porownaj` działają domyślnie na ostatnim przebiegu: składają animacje
+i porównanie z NIST w `przebiegi/run_.../`.
 
 Przykład próby z innymi parametrami (bez kompilacji):
 
 ```bash
 just run TU=0.6 cw=1.0
 just porownaj
+just przebiegi
 ```
+
+`just przebiegi` pokazuje tabelę wszystkich prób z parametrami i wynikami porównania.
+
+## Przebiegi
+
+Każde `just run` tworzy nowy przebieg i niczego nie nadpisuje:
+
+```
+kontener:  /tmp/wildfire/run_20261104_103349/   out_*.data, fuel_*.data, params.csv
+           /tmp/wildfire/latest → run_20261104_103349     (ostatni przebieg)
+
+Mac:       wildfire_project/przebiegi/
+           ├── przebiegi.csv                     jeden wiersz na przebieg
+           └── run_20261104_103349/
+               ├── params.csv                    wszystkie parametry (just run)
+               ├── fire.gif  fuel.gif  wind.gif  png/       (just gif)
+               └── porownanie_nist.png  porownanie.csv      (just porownaj)
+```
+
+`przebiegi.csv` ma kolumny:
+- `run`,
+- `czas_s` (czas liczenia),
+- `argumenty` (to, co podałeś w `just run`),
+- wszystkie parametry z `params.csv`,
+- po `just porownaj`: wyniki porównania (`trafione_%`, `na_czas_%`, `opoznienie_min`, `spalone_%`,
+  `poza_nist_%`) i godziny dojścia ognia do miejscowości.
+
+Starszy przebieg wybierasz nazwą, np. `just gif run_20261104_103349`.
+
+Pliki `.data` jednego przebiegu zajmują ok. 400 MB w kontenerze. `just clean` usuwa je ze
+wszystkich przebiegów poza ostatnim. Pliki w `przebiegi/` na Macu zostają.
 
 ## Komendy
 
@@ -95,11 +128,12 @@ Wszystkie z katalogu `wildfire_project`. `just` bez argumentów wypisuje listę.
 |---|---|
 | `just kontener` | Zakłada kontener `iga-ads-dev` z obrazu `iga-ads:latest` i konfiguruje CMake. Robisz to raz. |
 | `just rebuild` | Kopiuje `fire.cpp`, `fire.hpp` i `camp_fire_data.hpp` do kontenera i kompiluje. Potrzebne po zmianie kodu C++ albo po `just dane`. |
-| `just run [nazwa=wartość ...]` | Usuwa stare wyniki i liczy symulację w `/tmp/wildfire` w kontenerze. Wypisuje czas i użyte parametry, które zapisuje też w `params.txt`. |
-| `just gif` | Tworzy `anim/fire.gif`, `anim/fuel.gif`, `anim/wind.gif` i klatki PNG w `anim/png/`, z rzekami, miejscowościami i godziną. |
-| `just porownaj` | Porównuje ostatni przebieg z obserwacjami NIST: wypisuje wskaźniki i rysuje `anim/porownanie_nist.png`. |
+| `just run [nazwa=wartość ...]` | Nowy przebieg `run_<data>_<godzina>` w kontenerze. Zapisuje `params.csv`, dopisuje wiersz do `przebiegi/przebiegi.csv`, wypisuje czas i parametry. |
+| `just gif [run]` | Tworzy `fire.gif`, `fuel.gif`, `wind.gif` i klatki PNG w `przebiegi/<run>/`, z rzekami, miejscowościami i godziną. Domyślnie bierze ostatni przebieg. |
+| `just porownaj [run]` | Porównuje przebieg z NIST: wypisuje wskaźniki, tworzy `porownanie_nist.png` i `porownanie.csv` i uzupełnia wiersz w `przebiegi.csv`. |
+| `just przebiegi` | Tabela wszystkich przebiegów z `przebiegi.csv`. |
 | `just dane` | Przelicza dane z `dane_nist/` na `camp_fire_data.hpp`, `model_data.json` i `model_paliwo.png`. Potrzebne tylko przy zmianie danych albo szerokości pasa rzek. Potem `just rebuild`. |
-| `just clean` | Usuwa `/tmp/wildfire` w kontenerze. |
+| `just clean` | Usuwa z kontenera pliki `.data` wszystkich przebiegów poza ostatnim. |
 | `just n=60 run` | Inna siatka (domyślnie `n=80`, `p=2`). Uwaga: rzadsza siatka zmienia wynik. |
 
 Pliki `.data` (temperatura `out_*.data` i paliwo `fuel_*.data`) zostają w kontenerze.
@@ -183,6 +217,7 @@ Bazą jest przykład `fire` z IGA-ADS (gałąź `spciaa`), czyli równania ze sl
   0.035, 1.5, 1 i 300). Lokalnie spalanie trwa 6 razy dłużej, ale progi zapłonu i gaśnięcia
   są te same, a front jest ok. 6 razy szerszy. Dla mnożnika 3 i 6 wyniki są zbliżone.
 - Parametry przekazywane z linii poleceń (`fire <N> <p> <wątki> [nazwa=wartość ...]`).
+  Program zapisuje je w `params.csv` obok wyników.
   Zapis wyników jest co 250 kroków zamiast co 10 (wcześniej ok. 10 GB na przebieg).
 - `T = max(u, 0)` w `compute_rhs` chroni przed ujemną temperaturą od oscylacji splajnów.
   Bez tego potęgi i `exp` dają NaN w całym polu.
@@ -207,7 +242,7 @@ spcia_agh_course/
     │
     ├── fire.hpp               model: fire_params (wszystkie parametry i wagi), init_state,
     │                          fuel_map, wind_velocity, compute_rhs
-    ├── fire.cpp               main: czyta nazwa=wartość, zapisuje params.txt, uruchamia symulację
+    ├── fire.cpp               main: czyta nazwa=wartość, zapisuje params.csv, uruchamia symulację
     ├── camp_fire_data.hpp     WYGENEROWANY (just dane): mapa klas paliwa 201×201, tabela wiatru,
     │                          punkt zapłonu; nie edytować ręcznie
     │
@@ -216,9 +251,10 @@ spcia_agh_course/
     ├── model_data.json        WYGENEROWANY: rzeki, jezioro, miejscowości, wiatr (dla animate.py)
     ├── model_paliwo.png       WYGENEROWANY: podgląd mapy klas paliwa
     │
-    ├── animate.py             .data z kontenera → anim/fire.gif, fuel.gif, wind.gif, anim/png/
-    ├── porownaj_nist.py       porównanie przebiegu z NIST → wskaźniki, anim/porownanie_nist.png
-    ├── anim/                  wyniki just gif i just porownaj
+    ├── animate.py             .data z kontenera → fire.gif, fuel.gif, wind.gif, png/
+    ├── porownaj_nist.py       porównanie przebiegu z NIST → wskaźniki, porownanie_nist.png, .csv
+    ├── przebiegi/             wyniki kolejnych przebiegów (patrz „Przebiegi”) i przebiegi.csv
+    ├── anim/                  animacje pokazywane w tym README (skopiowane z wybranego przebiegu)
     │
     └── dane_nist/             prawdziwe dane o pożarze i skrypty do nich (opis: dane_nist/README.md)
         ├── NIST TN 2135 Appendix F Fire Spread Data.xlsx   obserwacje ognia (czas + GPS)
@@ -237,9 +273,9 @@ spcia_agh_course/
 ```
 dane_nist/ (NIST, OSM, Jarbo Gap, LANDFIRE)
    └─ just dane ──→ camp_fire_data.hpp ─ just rebuild ─→ fire (w kontenerze)
-                └─→ model_data.json                        └─ just run ─→ /tmp/wildfire/*.data
-                                                                 ├─ just gif ──────→ anim/*.gif
-                                                                 └─ just porownaj ─→ anim/porownanie_nist.png
+                └─→ model_data.json                        └─ just run ─→ /tmp/wildfire/run_.../*.data
+                                                                 ├─ just gif ──────→ przebiegi/run_.../*.gif
+                                                                 └─ just porownaj ─→ przebiegi/run_.../porownanie_nist.png
 ```
 
 ## Źródła danych
@@ -261,14 +297,16 @@ Uwagi:
 
 ## Gdzie co jest do raportu
 
+`run_...` to wybrany przebieg w `wildfire_project/przebiegi/`.
+
 | Punkt | Plik |
 |---|---|
 | Zmieniony kod | `wildfire_project/fire.hpp`, `wildfire_project/fire.cpp` |
 | Opis pożaru | `dane_nist/wyniki/mapa_obserwacje.png`, `pozar_nist.gif`, `odleglosc_czas.png`, `rejony_czas.png` |
-| Mapa paliwa | `model_paliwo.png` (klasy), `anim/png/fuel/fuel_00000.png` (wagi w modelu), `dane_nist/wyniki/landfire_paliwo.png` |
-| Stan początkowy | `anim/png/fire/fire_00000.png` |
-| Wiatr w różnych chwilach | `anim/png/wind/`, `dane_nist/wyniki/wiatr_jarbo.png`, `dane_nist/wyniki/klatki_wiatr/` |
-| Animacja wiatru | `anim/wind.gif`, `dane_nist/wyniki/wiatr_anim.gif` |
-| Animacja pożaru | `anim/fire.gif`, `anim/fuel.gif` |
-| Kroki czasowe PNG | `anim/png/fire/`, `anim/png/fuel/` |
-| Porównanie z prawdziwym pożarem | `anim/porownanie_nist.png` i wynik `just porownaj` |
+| Mapa paliwa | `model_paliwo.png` (klasy), `run_.../png/fuel/fuel_00000.png` (wagi w modelu), `dane_nist/wyniki/landfire_paliwo.png` |
+| Stan początkowy | `run_.../png/fire/fire_00000.png` |
+| Wiatr w różnych chwilach | `run_.../png/wind/`, `dane_nist/wyniki/wiatr_jarbo.png`, `dane_nist/wyniki/klatki_wiatr/` |
+| Animacja wiatru | `run_.../wind.gif`, `dane_nist/wyniki/wiatr_anim.gif` |
+| Animacja pożaru | `run_.../fire.gif`, `run_.../fuel.gif` |
+| Kroki czasowe PNG | `run_.../png/fire/`, `run_.../png/fuel/` |
+| Porównanie z prawdziwym pożarem | `run_.../porownanie_nist.png`, `porownanie.csv`, `przebiegi.csv` |
