@@ -7,24 +7,44 @@ container := env_var_or_default("IGA_CONTAINER", "iga-ads-dev")
 results := "/tmp/wildfire"
 build_dir := env_var_or_default("IGA_BUILD", "/build")
 fire_dir := "/code/examples/fire"
+# siatka N x N elementów, stopień splajnów p (np. just n=60 run)
+n := "80"
+p := "2"
+python := env_var_or_default("PYTHON", "python3")
 
 default:
     @just --list
 
+# Załóż kontener z obrazu iga-ads:latest i skonfiguruj CMake (raz, potem just rebuild)
+kontener:
+    docker run -d --name {{container}} iga-ads:latest sleep infinity
+    docker exec {{container}} just config
+
 # Złóż fire.gif, fuel.gif i wind.gif oraz klatki PNG, czytając /tmp/wildfire w kontenerze
 gif:
-    python3 {{justfile_directory()}}/animate.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
+    {{python}} {{justfile_directory()}}/animate.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
 
-# Skopiuj fire.cpp i fire.hpp do kontenera pod tymi samymi nazwami i przebuduj
+# Porównaj ostatni przebieg z obserwacjami NIST: liczby + anim/porownanie_nist.png
+porownaj:
+    {{python}} {{justfile_directory()}}/porownaj_nist.py --docker {{container}} --data {{results}} --out {{justfile_directory()}}/anim
+
+# Przelicz dane NIST/LANDFIRE/OSM/Jarbo Gap na camp_fire_data.hpp i model_data.json
+dane:
+    {{python}} {{justfile_directory()}}/przygotuj_model.py
+
+# Skopiuj fire.cpp, fire.hpp i camp_fire_data.hpp do kontenera i przebuduj
 rebuild:
     docker cp {{justfile_directory()}}/fire.cpp {{container}}:{{fire_dir}}/fire.cpp
     docker cp {{justfile_directory()}}/fire.hpp {{container}}:{{fire_dir}}/fire.hpp
-    docker exec {{container}} cmake --build {{build_dir}} --target ads.example.fire -j
+    docker cp {{justfile_directory()}}/camp_fire_data.hpp {{container}}:{{fire_dir}}/camp_fire_data.hpp
+    docker exec {{container}} cmake --build {{build_dir}} --target ads-example-fire -j
 
-# Załóż /tmp/wildfire w kontenerze i odpal symulację; pliki .data zostają tam
-run n="80" p="2":
-    docker exec {{container}} mkdir -p {{results}}
-    docker exec --workdir {{results}} {{container}} bash -lc '/build/bin/fire {{n}} {{p}} "$(nproc)"'
+# Odpal symulację w /tmp/wildfire (stare .data usuwa). Parametry jak w fire_params w fire.hpp, np.
+#   just run TU=0.6 GR=0.9      just run cw=1.0 rad=0.13      just run t_end=4   (tylko do 8:25)
+run *args:
+    docker exec {{container}} bash -c 'mkdir -p {{results}} && rm -f {{results}}/*.data'
+    docker exec --workdir {{results}} {{container}} bash -lc 'time /build/examples/fire {{n}} {{p}} "$(nproc)" {{args}} | grep -v "^Step"'
+    docker exec {{container}} cat {{results}}/params.txt
 
 # Usuń katalog wyników /tmp/wildfire w kontenerze
 clean:
