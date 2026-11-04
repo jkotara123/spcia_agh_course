@@ -2,8 +2,9 @@
 """GIF-y z wynikow symulacji Camp Fire.
 
 Czyta out_<krok>.data (temperatura) i fuel_<krok>.data (paliwo).
-Wiatr nie jest zapisywany przez program — klatki sa liczone z tej samej
-formuly co wind_velocity w fire.hpp.
+Wiatr nie jest zapisywany przez program: klatki sa liczone z tej samej tabeli
+(stacja Jarbo Gap) co wind_velocity w fire.hpp, zapisanej w model_data.json.
+Na wszystkich animacjach: rzeki i jezioro (OSM), miejscowosci i zapalon (NIST).
 
 Dane zostaja w kontenerze, skrypt sciaga tylko klatki, ktore rysuje:
 
@@ -12,6 +13,7 @@ Dane zostaja w kontenerze, skrypt sciaga tylko klatki, ktore rysuje:
 
 import argparse
 import io
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -23,32 +25,46 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-DT = 1e-3  # timesteps_config w fire.cpp
+DT = 1e-3  # krok czasu; nadpisywany z params.txt zapisanego przez fire
 T_END = 10.0
 
 
-def canyon_distance(x, y):
-    ax, ay = 90.0, 80.0
-    bx, by = 40.0, 16.0
-    dx, dy = bx - ax, by - ay
-    L2 = dx * dx + dy * dy
-    t = ((x - ax) * dx + (y - ay) * dy) / L2
-    t = np.clip(t, 0.0, 1.0)
-    return np.hypot(x - (ax + t * dx), y - (ay + t * dy))
+MODEL = {}  # model_data.json z przygotuj_model.py
+
+
+def load_model(path):
+    MODEL.update(json.loads(Path(path).read_text()))
 
 
 def wind_velocity(x, y, t):
-    """Ta sama formula co fire::wind_velocity."""
-    morning = np.exp(-((t / 2.2) ** 2))
-    evening = np.exp(-(((t - 7.0) / 1.8) ** 2))
-    strength = 0.25 + 0.75 * morning + 0.40 * evening
-    channel = np.exp(-((canyon_distance(x, y) / 22.0) ** 2))
-    speed = 12.0 * strength * (0.62 + 0.38 * channel)
-    turn = 1.0 - morning
-    dirx = -0.96 + 0.16 * turn
-    diry = -0.28 - 0.32 * turn
-    norm = np.hypot(dirx, diry)
-    return speed * dirx / norm, speed * diry / norm
+    """Ta sama interpolacja co fire::wind_velocity: tabela ze stacji Jarbo Gap, jednorodnie w przestrzeni."""
+    w = MODEL["wind"]
+    bx = np.interp(t, w["t"], w["bx"])
+    by = np.interp(t, w["t"], w["by"])
+    return np.full_like(x, bx, dtype=float), np.full_like(y, by, dtype=float)
+
+
+def clock(t):
+    """Godzina 8 XI 2018 odpowiadajaca czasowi modelu t."""
+    h = MODEL["t0_hour"] + t * MODEL["hours_per_unit"]
+    return f"{int(h):02d}:{int(round((h % 1) * 60)) % 60:02d}"
+
+
+def draw_overlay(ax):
+    """Rzeki, jezioro (OSM), miejscowosci i zapalon - tak jak na mapach NIST."""
+    for _name, xs, ys in MODEL.get("lakes", []):
+        ax.plot(xs, ys, color="#4fa3e0", lw=0.6, alpha=0.9)
+    for _name, xs, ys in MODEL.get("rivers", []):
+        ax.plot(xs, ys, color="#4fa3e0", lw=1.2, alpha=0.9)
+    for name, (x, y) in MODEL.get("towns", {}).items():
+        ax.plot(x, y, "+", color="white", ms=9, mew=2.5)
+        ax.plot(x, y, "k+", ms=8, mew=1.2)
+        ax.annotate(name, (x, y), xytext=(3, 3), textcoords="offset points", fontsize=8, weight="bold",
+                    bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=1))
+    if "ignition" in MODEL:
+        ax.plot(*MODEL["ignition"], "*", color="red", ms=12, mec="k")
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
 
 
 class DataSource:
@@ -73,6 +89,19 @@ class DataSource:
             if match:
                 steps.append(int(match.group(1)))
         return sorted(steps)
+
+    def read_params(self):
+        """params.txt z fire (nazwa=wartość); pusty słownik, gdy go nie ma."""
+        path = f"{self.data_dir}/params.txt"
+        try:
+            if self.container:
+                text = subprocess.check_output(["docker", "exec", self.container, "cat", path],
+                                               text=True, stderr=subprocess.DEVNULL)
+            else:
+                text = Path(path).read_text()
+        except (subprocess.CalledProcessError, OSError):
+            return {}
+        return dict(line.split("=", 1) for line in text.split() if "=" in line)
 
     def read_frame(self, prefix, step):
         name = f"{prefix}_{step}.data"
@@ -191,12 +220,13 @@ def animate_scalar(frames, out_dir: Path, name: str, title, cmap, vmin, vmax, fp
         aspect="equal",
     )
     fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-    ax.set_xlabel("x (wschod)")
+    draw_overlay(ax)
+    ax.set_xlabel("x (wschod) [1 = 300 m]")
     ax.set_ylabel("y (polnoc)")
 
     for step, grid, _extent in frames:
         image.set_data(grid)
-        ax.set_title(f"{title},  t = {step * DT:.3f}")
+        ax.set_title(f"{title},  t = {step * DT:.2f}  ({clock(step * DT)})")
         fig.tight_layout()
         shot = figure_image(fig, dpi)
         images.append(shot)
@@ -210,40 +240,30 @@ def animate_wind(out_dir: Path, frames_n: int, fps: int, dpi: int):
 
     png_dir = out_dir / "png" / "wind"
     png_dir.mkdir(parents=True, exist_ok=True)
-    xs = np.linspace(0.0, 100.0, 35)
-    ys = np.linspace(0.0, 100.0, 35)
+    xs = np.linspace(2.0, 98.0, 17)
+    ys = np.linspace(2.0, 98.0, 17)
     X, Y = np.meshgrid(xs, ys)
     times = np.linspace(0.0, T_END, frames_n)
     images = []
     fig, ax = plt.subplots(figsize=(6.2, 5.4))
     fig._anim_buf = io.BytesIO()
 
+    w = MODEL["wind"]
+    vmax = float(np.hypot(w["bx"], w["by"]).max())
     bx, by = wind_velocity(X, Y, times[0])
-    speed = np.hypot(bx, by)
-    # Stala skala: poranny poryw ma zostac najciemniejszy, poludnie jasniejsze.
-    vmax = float(np.hypot(*wind_velocity(X, Y, 0.0)).max())
-    field = ax.pcolormesh(X, Y, speed, cmap="Blues", shading="auto", vmin=0.0, vmax=vmax)
-    bar = fig.colorbar(field, ax=ax, fraction=0.046, pad=0.04)
-    bar.set_label("predkosc")
-    quiver = ax.quiver(
-        X, Y, bx, by, color="#1a1a1a", angles="xy", scale_units="xy", scale=5.0
-    )
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 100)
+    quiver = ax.quiver(X, Y, bx, by, color="#1f3b73", alpha=0.7, angles="xy", scale_units="xy",
+                       scale=vmax / 5.0, width=0.004, zorder=3)
     ax.set_aspect("equal")
-    ax.set_xlabel("x (wschod)")
+    draw_overlay(ax)
+    ax.set_xlabel("x (wschod) [1 = 300 m]")
     ax.set_ylabel("y (polnoc)")
-    ax.plot(82, 62, "o", color="#c0392b", ms=5)
-    ax.plot(48, 52, "o", color="#d68910", ms=5)
-    ax.text(83, 66, "Pulga", color="#c0392b", fontsize=8)
-    ax.text(49, 56, "Paradise", color="#d68910", fontsize=8)
 
     for t in times:
         bx, by = wind_velocity(X, Y, float(t))
-        speed = np.hypot(bx, by)
-        field.set_array(speed.ravel())
         quiver.set_UVC(bx, by)
-        ax.set_title(f"wiatr Jarbo Gap,  t = {t:.2f}")
+        ms = float(np.interp(t, w["t"], w["ms"]))
+        frm = (np.degrees(np.arctan2(-bx[0, 0], -by[0, 0])) + 360) % 360
+        ax.set_title(f"wiatr Jarbo Gap,  t = {t:.2f}  ({clock(t)}),  {ms:.1f} m/s z {frm:.0f}°")
         fig.tight_layout()
         shot = figure_image(fig, dpi)
         images.append(shot)
@@ -261,9 +281,16 @@ def main():
     parser.add_argument("--fps", type=int, default=8)
     parser.add_argument("--dpi", type=int, default=90)
     parser.add_argument("--wind-frames", type=int, default=40)
+    parser.add_argument("--model", type=Path, default=Path(__file__).with_name("model_data.json"),
+                        help="model_data.json z przygotuj_model.py (rzeki, miasta, wiatr)")
     args = parser.parse_args()
+    load_model(args.model)
 
     source = DataSource(args.data, args.docker or None)
+    global DT, T_END
+    params = source.read_params()
+    DT = float(params.get("dt", DT))
+    T_END = float(params.get("t_end", T_END))
     steps = source.list_steps("out")
     if not steps:
         raise SystemExit(f"brak out_*.data w {args.data}")

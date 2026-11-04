@@ -11,15 +11,15 @@
 #include "ads/output_manager.hpp"
 #include "ads/simulation.hpp"
 #include "ads/util.hpp"
+#include "camp_fire_data.hpp"
 
-// Schematic of the 2018 Camp Fire on the model square [0, 100]^2.
-// x grows east, y grows north. Not a georeferenced map.
-//   Pulga (ignition)     (82, 62)
-//   Concow               (68, 64)
-//   Paradise             (48, 52)
-//   Magalia              (50, 70)
-//   Lake Oroville        southwest of Paradise
-//   Feather River        canyon axis from the NE rim into the lake
+// Camp Fire, 8 XI 2018, na kwadracie modelu [0, 100]^2: x na wschód, y na północ,
+// 1 jednostka = 300 m (obszar 30 x 30 km). Dane z prawdziwych pomiarów, przeliczone przez
+// przygotuj_model.py do camp_fire_data.hpp:
+//   paliwo  - LANDFIRE 2016 FBFM40 (stan przed pożarem) + rzeki z OpenStreetMap
+//   wiatr   - stacja RAWS Jarbo Gap (JBGC1), pomiary co godzinę
+//   zapłon  - pierwsza obserwacja NIST TN 2135 (linia przesyłowa koło Pulga)
+// Czas: t = 0 to zapłon o 6:25, 1 jednostka czasu = 0,5 h, więc t in [0, 10] to 6:25-11:25.
 
 inline double falloff(double r, double R, double t) {
     if (t < r)
@@ -30,36 +30,78 @@ inline double falloff(double r, double R, double t) {
     return std::pow((h - 1) * (h + 1), 2);
 }
 
-inline double smoothstep(double edge0, double edge1, double x) {
-    if (x <= edge0)
-        return 0.0;
-    if (x >= edge1)
-        return 1.0;
-    double s = (x - edge0) / (edge1 - edge0);
-    return s * s * (3.0 - 2.0 * s);
-}
-
-// 1 inside the ellipse, 0 outside, with a soft edge.
-inline double ellipse_mask(double x, double y, double cx, double cy, double rx, double ry) {
-    double n = std::pow((x - cx) / rx, 2) + std::pow((y - cy) / ry, 2);
-    return 1.0 - smoothstep(0.55, 1.15, n);
-}
-
-// Distance to the Feather River / Jarbo Gap axis (Pulga rim -> Lake Oroville).
-inline double canyon_distance(double x, double y) {
-    const double ax = 90.0;
-    const double ay = 80.0;
-    const double bx = 40.0;
-    const double by = 16.0;
-    double dx = bx - ax;
-    double dy = by - ay;
-    double L2 = dx * dx + dy * dy;
-    double t = ((x - ax) * dx + (y - ay) * dy) / L2;
-    t = std::max(0.0, std::min(1.0, t));
-    return std::hypot(x - (ax + t * dx), y - (ay + t * dy));
+// Liniowa interpolacja tabeli (xs rosnące); poza zakresem wartość z końca.
+inline double interp_table(const double* xs, const double* ys, int n, double x) {
+    if (x <= xs[0])
+        return ys[0];
+    if (x >= xs[n - 1])
+        return ys[n - 1];
+    int i = 1;
+    while (xs[i] < x)
+        ++i;
+    double h = (x - xs[i - 1]) / (xs[i] - xs[i - 1]);
+    return (1 - h) * ys[i - 1] + h * ys[i];
 }
 
 namespace ads::problems {
+
+// Parametry do strojenia, nadpisywane z linii poleceń: fire <N> <p> <threads> [nazwa=wartość ...]
+//
+// Front ognia musi być szerszy niż element siatki (100 / N = 1,25), inaczej "zacina się" na liniach
+// siatki i gaśnie albo idzie wzdłuż osi. Stąd rad, loss razy 6 i heat, burn przez 6 względem
+// wartości ze slajdów (0.035 / 1.5 / 1 / 300): lokalne spalanie trwa 6 razy dłużej, ale progi
+// zapłonu i gaśnięcia są te same, a front jest ok. 6 razy szerszy. Wartości dobrane porównaniem
+// z obserwacjami NIST (porownaj_nist.py).
+struct fire_params {
+    double rad = 0.16;      // promieniowanie: delta_x = rad / eps; prędkość frontu rośnie jak sqrt(rad)
+    double loss = 9;        // straty ciepła w górę: delta_z = loss * eps (mniej = większe straty)
+    double cw = 0.5;        // jak mocno wiatr niesie ciepło
+    double Tig = 800;       // temperatura zapłonu
+    double fuel_min = 0.2;  // od ilu paliwa komórka się pali
+    double heat = 1.0 / 6;  // mnożnik ciepła spalania Rc
+    double burn = 50;       // tempo wypalania paliwa
+    int fuel_heat = 1;      // 1 = ciepło spalania razy waga klasy paliwa (krzewy grzeją mocniej niż podszyt)
+    double dt = 1e-3;
+    double t_end = 10;      // 10 = 11:25
+    int out_every = 250;    // zapis .data co tyle kroków (250 = ok. 40 klatek do animacji)
+
+    // Wagi paliwa 0..1 dla klas LANDFIRE (mapa klas w camp_fire_data.hpp, podgląd: model_paliwo.png).
+    // Pali się tylko paliwo > fuel_min; więcej paliwa = dłużej płonie. Przy fuel_heat = 1 waga
+    // klasy mnoży też ciepło spalania Rc.
+    // Przy heat = 1/6 ogień sam się utrzymuje od wagi ok. 0.55; niżej gaśnie (chyba że sąsiedzi grzeją).
+    double SH = 1.00;     // krzewy (chaparral)
+    double GS = 1.00;     // trawy z krzewami
+    double GR = 0.80;     // trawy
+    double TU = 0.50;     // podszyt leśny: wg NIST ogień go omijał (29% obszaru, 5% obserwacji)
+    double TL = 0.90;     // ściółka leśna: sosny na grzbiecie Paradise, 45% obserwacji NIST
+    double SB = 1.00;     // pozostałości po wycince
+    double urban = 0.90;  // zabudowa: domy w Paradise i Magalia spłonęły
+    double agri = 0.15;   // pola uprawne (nawadniane)
+    double rock = 0.05;   // skały, piach
+    double water = 0.0;   // woda (jezioro Oroville)
+    double snow = 0.0;
+    double other = 0.50;  // kody spoza listy
+    double river = 0.55;  // pas 150 m przy rzece: min(waga klasy, river)
+
+    double fuel_weight(unsigned char code) const {
+        double w = other;
+        switch (code & ~camp_fire::RIVER) {
+        case camp_fire::URBAN: w = urban; break;
+        case camp_fire::SNOW: w = snow; break;
+        case camp_fire::AGRI: w = agri; break;
+        case camp_fire::WATER: w = water; break;
+        case camp_fire::ROCK: w = rock; break;
+        case camp_fire::GR: w = GR; break;
+        case camp_fire::GS: w = GS; break;
+        case camp_fire::SH: w = SH; break;
+        case camp_fire::TU: w = TU; break;
+        case camp_fire::TL: w = TL; break;
+        case camp_fire::SB: w = SB; break;
+        default: break;
+        }
+        return code & camp_fire::RIVER ? std::min(w, river) : w;
+    }
+};
 
 class fire : public simulation_2d {
 private:
@@ -72,80 +114,67 @@ private:
     double Ar = 5.7e-5;
     double rho = 1.293;
     double cp = 1.0;
-    double cw = 0.5;
+    double cw;
     double kappa = 0.3;
     double xi = 2e-2;
     double sigma = 5.67e-8;
     double eps = 0.05; // "percentage error"
-    double delta_x = 3.5e-2 / eps;
-    double delta_z = 1.5 * eps;
+    double delta_x;
+    double delta_z;
     double T0 = 300;
     double Tcomb = 1200;
-    double Tig = 800;
+    double Tig;
     double Ta = 300; // ???
 
     double M = 2;
     double M1 = 1;
 
+    fire_params par;
+
     galois_executor executor;
     output_manager<2> output;
 
 public:
-    explicit fire(const config_2d& config, int threads)
+    explicit fire(const config_2d& config, const fire_params& params, int threads)
     : Base{config}
     , u{shape()}
     , u_prev{shape()}
     , fuel{shape()}
     , fuel_prev{shape()}
+    , cw{params.cw}
+    , delta_x{params.rad / eps}
+    , delta_z{params.loss * eps}
+    , Tig{params.Tig}
+    , par{params}
     , executor{threads}
     , output{x.B, y.B, 300} { }
 
-    // Point ignition under the Pulga transmission line, morning of 8 Nov 2018.
-    // Hot core is a few model units across; the rest of the domain stays at T0.
+    // Zapłon w miejscu pierwszej obserwacji NIST (6:25), gorący rdzeń ok. 0,75 km, otoczka do 2 km.
     double init_state(double x, double y) {
-        const double x0 = 82.0;
-        const double y0 = 62.0;
-        double d = std::hypot(x - x0, y - y0);
+        double d = std::hypot(x - camp_fire::IGNITION_X, y - camp_fire::IGNITION_Y);
         return T0 + Tcomb * falloff(2.5, 7.0, d);
     }
 
-    // 1 = continuous dry wildland fuel, 0 = water (nothing to burn).
-    // Towns stay flammable: the real fire burned through the WUI.
+    // Paliwo z siatki klas LANDFIRE: waga klasy z fire_params, interpolacja dwuliniowa.
     double fuel_map(double x, double y) const {
-        double easting = (0.45 * x + 0.55 * y) / 100.0;
-        double fuel = 0.75 + 0.23 * easting;
-
-        fuel += (1.00 - fuel) * ellipse_mask(x, y, 68.0, 64.0, 8.0, 6.0);  // Concow
-        fuel += (0.62 - fuel) * ellipse_mask(x, y, 48.0, 52.0, 11.0, 8.0); // Paradise
-        fuel += (0.72 - fuel) * ellipse_mask(x, y, 50.0, 70.0, 8.0, 6.0);  // Magalia
-
-        double lake = ellipse_mask(x, y, 28.0, 26.0, 24.0, 16.0);
-        double river = 1.0 - smoothstep(2.2, 3.8, canyon_distance(x, y));
-        double water = std::max(lake, river);
-        fuel *= (1.0 - water);
-
-        return std::max(0.0, std::min(1.0, fuel));
+        const int n = camp_fire::FUEL_N;
+        double gx = std::clamp(x / 100.0 * (n - 1), 0.0, n - 1.0);
+        double gy = std::clamp(y / 100.0 * (n - 1), 0.0, n - 1.0);
+        int i = std::min(static_cast<int>(gx), n - 2);
+        int j = std::min(static_cast<int>(gy), n - 2);
+        double hx = gx - i;
+        double hy = gy - j;
+        auto f = [this, n](int a, int b) { return par.fuel_weight(camp_fire::FUEL_CLASS[b * n + a]); };
+        return (1 - hx) * (1 - hy) * f(i, j) + hx * (1 - hy) * f(i + 1, j)
+             + (1 - hx) * hy * f(i, j + 1) + hx * hy * f(i + 1, j + 1);
     }
 
-    // Jarbo Gap wind. Velocity points mostly west, a little south (from the NE).
-    // t = 0 is sunrise on 8 Nov (peak), the lull is midday, a second pulse is the evening.
-    // The run t in [0, 10] stands in for that first day. Peak speed is 12 in the
-    // model's wind units; the explicit step is unstable near the old value of 40.
-    void wind_velocity(double x, double y, double t, double& bx, double& by) const {
-        double morning = std::exp(-std::pow(t / 2.2, 2));
-        double evening = std::exp(-std::pow((t - 7.0) / 1.8, 2));
-        double strength = 0.25 + 0.75 * morning + 0.40 * evening;
-
-        double channel = std::exp(-std::pow(canyon_distance(x, y) / 22.0, 2));
-        // Peak 12, not 40: the explicit step goes negative and then NaN at the higher value.
-        double speed = 12.0 * strength * (0.62 + 0.38 * channel);
-
-        double turn = 1.0 - morning; // evening flow spreads more to the south
-        double dirx = -0.96 + 0.16 * turn;
-        double diry = -0.28 - 0.32 * turn;
-        double norm = std::hypot(dirx, diry);
-        bx = speed * dirx / norm;
-        by = speed * diry / norm;
+    // Wiatr ze stacji Jarbo Gap: jedna stacja, więc taki sam w całym obszarze.
+    // Interpolacja liniowa między pomiarami co godzinę. Wieje z NE (ok. 30-40 st.),
+    // czyli pcha ogień na południowy zachód; najsilniej rano, słabiej w południe.
+    void wind_velocity(double /*x*/, double /*y*/, double t, double& bx, double& by) const {
+        bx = interp_table(camp_fire::WIND_T, camp_fire::WIND_BX, camp_fire::WIND_N, t);
+        by = interp_table(camp_fire::WIND_T, camp_fire::WIND_BY, camp_fire::WIND_N, t);
     }
 
 private:
@@ -193,6 +222,7 @@ private:
                 double y = p[1];
                 double bx, by;
                 wind_velocity(x, y, t, bx, by);
+                double intensity = par.heat * (par.fuel_heat ? fuel_map(x, y) : 1.0);
 
                 value_type u = eval_fun(u_prev, e, q);
                 value_type fuel = eval_fun(fuel_prev, e, q);
@@ -205,12 +235,12 @@ private:
                     // Spline ringing near the ignition can drive T below 0. pow() and
                     // exp(-Ta/T) then overflow, and 0*inf becomes NaN for the whole field.
                     double T = std::max(u.val, 0.0);
-                    double delta = T > Tig && fuel.val > 0.2 ? 1.0 : 0.0;
+                    double delta = T > Tig && fuel.val > par.fuel_min ? 1.0 : 0.0;
                     double hc = -70; // enthalpy
                     double r = 0.0;
                     if (delta > 0.0)
                         r = Ar * T * std::exp(-Ta / T);
-                    double Rc = - 1e4 * rho * ch * hc * M / M1 * r;
+                    double Rc = - intensity * 1e4 * rho * ch * hc * M / M1 * r;
                     double Qw = - rho * cw * (bx * u.dx + by * u.dy);
                     double qc = - kappa * grad_dot(u, v);
                     double qd = 0.0; // omitted
@@ -221,7 +251,7 @@ private:
                     double val = (Rc + Qw + Qconv + Qrz) * v.val + qc + qd + qr;
                     U(aa[0], aa[1]) += (u.val * v.val + steps.dt * inv * val) * w * J;
 
-                    double fval = - delta * 3e2 * r * fuel.val * v.val;
+                    double fval = - delta * par.burn * r * fuel.val * v.val;
                     F(aa[0], aa[1]) += (fuel.val * v.val + steps.dt * fval) * w * J;
                 }
             }
@@ -232,7 +262,7 @@ private:
 
     void after_step(int iter, double /*t*/) override {
         auto i = iter  +1;
-        if (i % 10 == 0) {
+        if (i % par.out_every == 0) {
             std::cout << "Step " << i << std::endl;
             output.to_file(u, "out_%d.data", i);
             output.to_file(fuel, "fuel_%d.data", i);
