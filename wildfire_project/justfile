@@ -18,10 +18,19 @@ runs := justfile_directory() / "przebiegi"
 default:
     @just --list
 
-# Załóż kontener z obrazu iga-ads:latest i skonfiguruj CMake (raz, potem just rebuild)
+# Załóż kontener z obrazu iga-ads:latest i skonfiguruj CMake (raz, potem just rebuild). Jeśli kontener już jest, tylko go uruchamia.
 kontener:
-    docker run -d --name {{container}} iga-ads:latest sleep infinity
-    docker exec {{container}} just config
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if docker container inspect {{container}} >/dev/null 2>&1; then
+        docker start {{container}} >/dev/null
+        echo "kontener {{container}} już jest, uruchomiony"
+    else
+        docker run -d --name {{container}} iga-ads:latest sleep infinity
+    fi
+    if ! docker exec {{container}} test -f {{build_dir}}/CMakeCache.txt; then
+        docker exec {{container}} just config
+    fi
 
 # Animacje fire.gif, fuel.gif, wind.gif i klatki PNG do przebiegi/<run>/ (domyślnie ostatni przebieg)
 gif run="latest":

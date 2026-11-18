@@ -1,0 +1,100 @@
+# Pollution. Odpalaj z tego katalogu na hoście: just <zadanie>
+#
+# Każde just run to nowy przebieg run_<data>_<godzina>:
+#   w kontenerze  /tmp/pollution/run_.../   pliki .data i params.csv (/tmp/pollution/latest = ostatni)
+#   na hoście     przebiegi/run_.../        params.csv, log.txt, potem animacja (just gif)
+#   na hoście     przebiegi/przebiegi.csv   jeden wiersz na przebieg: parametry i czas
+
+container := env_var_or_default("IGA_CONTAINER", "iga-ads-dev")
+results := "/tmp/pollution"
+build_dir := env_var_or_default("IGA_BUILD", "/build")
+example := "pollution_spcia"
+example_dir := "/code/examples/" + example
+# siatka N x N elementów, stopień splajnów p (np. just n=40 run)
+n := "40"
+p := "2"
+python := env_var_or_default("PYTHON", "python3")
+runs := justfile_directory() / "przebiegi"
+
+default:
+    @just --list
+
+# Załóż kontener z obrazu iga-ads:latest i skonfiguruj CMake (raz, potem just rebuild). Jeśli kontener już jest (np. z wildfire_project), tylko go uruchamia.
+kontener:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if docker container inspect {{container}} >/dev/null 2>&1; then
+        docker start {{container}} >/dev/null
+        echo "kontener {{container}} już jest, uruchomiony"
+    else
+        docker run -d --name {{container}} iga-ads:latest sleep infinity
+    fi
+    if ! docker exec {{container}} test -f /code/justfile; then
+        echo "w /code kontenera nie ma źródeł IGA-ADS: obraz iga-ads:latest nie jest z gałęzi spciaa (patrz README)" >&2
+        exit 1
+    fi
+    if ! docker exec {{container}} test -f {{build_dir}}/CMakeCache.txt; then
+        docker exec {{container}} just config
+    fi
+
+# Skopiuj pollution.cpp i pollution.hpp do kontenera i przebuduj (za pierwszym razem dopisuje przykład do CMake)
+rebuild:
+    docker exec {{container}} mkdir -p {{example_dir}}
+    docker cp {{justfile_directory()}}/pollution.cpp {{container}}:{{example_dir}}/pollution.cpp
+    docker cp {{justfile_directory()}}/pollution.hpp {{container}}:{{example_dir}}/pollution.hpp
+    docker exec {{container}} bash -c 'grep -q "add_example({{example}} " /code/examples/CMakeLists.txt || \
+        printf "\nadd_example({{example}} GALOIS\n  SRC\n  {{example}}/pollution.cpp)\n" >> /code/examples/CMakeLists.txt'
+    docker exec {{container}} cmake --build {{build_dir}} --target ads-example-{{example}} -j
+
+#   just run cannon_t=0          strzał od początku
+#   just run cannon_amp=0        sama inwersja, bez działka
+# Nowy przebieg run_<data>_<godzina>. Parametry: cannon_t, cannon_amp, cannon_x
+run *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="run_$(date +%Y%m%d_%H%M%S)"
+    dir="{{results}}/$name"
+    docker exec {{container}} mkdir -p "$dir"
+    trap 'docker exec {{container}} rm -rf "$dir"' ERR
+    echo "przebieg $name"
+    mkdir -p "{{runs}}/$name"
+    start=$SECONDS
+    docker exec --workdir "$dir" {{container}} bash -lc \
+        'set -o pipefail; {{build_dir}}/examples/{{example}} {{n}} {{p}} "$(nproc)" {{args}} 2>&1 | { grep -v "Numa" || true; }' \
+        | tee "{{runs}}/$name/log.txt" | { grep -v "^Step" || true; }
+    secs=$((SECONDS - start))
+    docker exec {{container}} ln -sfn "$name" "{{results}}/latest"
+    docker cp -q "{{container}}:$dir/params.csv" "{{runs}}/$name/params.csv"
+    header=$(head -1 "{{runs}}/$name/params.csv")
+    values=$(tail -1 "{{runs}}/$name/params.csv")
+    index="{{runs}}/przebiegi.csv"
+    if [ ! -f "$index" ]; then
+        echo "run,czas_s,argumenty,$header" > "$index"
+    elif ! head -1 "$index" | grep -q "^run,czas_s,argumenty,$header"; then
+        echo "uwaga: inne kolumny parametrów niż w $index (zmienił się pollution_params?)" >&2
+    fi
+    args="{{args}}"
+    echo "$name,$secs,${args:--},$values" >> "$index"
+    echo "gotowe w ${secs} s: $dir (kontener), {{runs}}/$name (params.csv, log.txt)"
+    tail -1 "{{runs}}/$name/log.txt"
+    paste -d= <(tr , '\n' <<< "$header") <(tr , '\n' <<< "$values") | paste -sd' ' -
+
+# Animacja pollution.gif i klatki PNG do przebiegi/<run>/ (domyślnie ostatni przebieg)
+gif run="latest" *opts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name=$(docker exec {{container}} readlink -f "{{results}}/{{run}}" | xargs basename)
+    {{python}} {{justfile_directory()}}/animate.py --docker {{container}} --data "{{results}}/$name" --out "{{runs}}/$name" {{opts}}
+
+# Tabela wszystkich przebiegów (przebiegi/przebiegi.csv)
+przebiegi:
+    @column -s, -t < {{runs}}/przebiegi.csv
+
+# Powłoka w kontenerze w katalogu ostatniego przebiegu
+shell:
+    docker exec -it --workdir {{results}}/latest {{container}} bash
+
+# Usuń z kontenera pliki .data wszystkich przebiegów poza ostatnim
+clean:
+    docker exec {{container}} bash -c 'cd {{results}} && \
+        ls -d run_* 2>/dev/null | grep -vx "$(readlink latest)" | xargs -r rm -rf'

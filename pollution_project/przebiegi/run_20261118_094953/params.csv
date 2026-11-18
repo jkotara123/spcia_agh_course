@@ -1,0 +1,2 @@
+N,p,ambient,diff,dt,src_r,src_x,src_y,t_end,wind_speed,out_every
+160,2,1e-06,20,10,25,3000,400,6000,5,15
