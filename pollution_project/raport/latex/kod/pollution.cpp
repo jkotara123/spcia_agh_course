@@ -37,18 +37,23 @@ int main(int argc, char* argv[]) {
             sim.cannon_n = static_cast<int>(value);
         else if (key == "cannon_dx")
             sim.cannon_dx = value;
+        else if (key == "cannon_shots")
+            sim.cannon_shots = static_cast<int>(value);
         else {
             std::cerr << "nieznany parametr: " << arg
-                      << "\nznane: cannon_t cannon_amp cannon_x cannon_n cannon_dx" << std::endl;
+                      << "\nznane: cannon_t cannon_amp cannon_x cannon_n cannon_dx cannon_shots" << std::endl;
             std::exit(1);
         }
     }
 
     std::ofstream info{"params.csv"};
-    info << "N,p,dt,t_end,inversion_y,cannon_t,cannon_amp,cannon_x,cannon_n,cannon_dx\n"
+    info << "N,p,dt,t_end,inversion_y,cannon_t,cannon_amp,cannon_x,cannon_n,cannon_dx,"
+            "cannon_shots,cannon_period,cannon_duration,cannon_width,cannon_reach\n"
          << n << ',' << p << ",1e-5," << iterations * 1e-5 << ",0.8,"
          << sim.cannon_t0 << ',' << sim.cannon_amp << ',' << sim.cannon_x << ','
-         << sim.cannon_n << ',' << sim.cannon_dx << '\n';
+         << sim.cannon_n << ',' << sim.cannon_dx << ',' << sim.cannon_shots << ','
+         << sim.cannon_period << ',' << sim.cannon_duration << ',' << sim.cannon_width << ','
+         << sim.cannon_reach << '\n';
 
     sim.run();
 }

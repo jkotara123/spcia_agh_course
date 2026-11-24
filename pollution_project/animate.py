@@ -139,6 +139,17 @@ def save_gif(images, path: Path, fps: int):
     print(f"{path}  ({len(images)} klatek, {fps} fps)")
 
 
+def is_firing(t, params):
+    """Czy działko strzela w chwili t (ten sam harmonogram co cannon() w pollution.hpp)."""
+    t0 = float(params.get("cannon_t", 0))
+    period = float(params.get("cannon_period", 0.06))
+    duration = float(params.get("cannon_duration", 0.03))
+    shots = int(float(params.get("cannon_shots", 10**9)))
+    if t < t0 or t - t0 >= shots * period:
+        return False
+    return (t - t0) % period < duration
+
+
 def animate_field(frames, out_dir: Path, name, title, cmap, norm, dt, params, fps, dpi):
     png_dir = out_dir / "png" / name
     png_dir.mkdir(parents=True, exist_ok=True)
@@ -147,22 +158,32 @@ def animate_field(frames, out_dir: Path, name, title, cmap, norm, dt, params, fp
     step0, grid0, extent = frames[0]
     image = ax.imshow(grid0, origin="lower", extent=extent, cmap=cmap, norm=norm,
                       interpolation="nearest", aspect="equal")
-    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, label=f"{title} u")
     if "src_x" in params and "src_y" in params:
         ax.plot(float(params["src_x"]), float(params["src_y"]), "^", color="red", ms=8, mec="k")
     if "inversion_y" in params:
-        ax.axhline(float(params["inversion_y"]), color="white", ls="--", lw=0.8, alpha=0.8)
-    if "cannon_x" in params and float(params.get("cannon_amp", "1")) != 0.0:
-        ax.plot(float(params["cannon_x"]), 0.0, "^", color="red", ms=8, mec="k")
-    ax.set_xlabel("x [m]")
-    ax.set_ylabel("y [m]")
+        ax.axhline(float(params["inversion_y"]), color="white", ls="--", lw=1.0, alpha=0.9,
+                   label="inwersja")
+    cannon_on = "cannon_x" in params and float(params.get("cannon_amp", "1")) != 0.0
+    if cannon_on:
+        n = int(float(params.get("cannon_n", 1)))
+        dx = float(params.get("cannon_dx", 0.3))
+        xs = [float(params["cannon_x"]) + (k - (n - 1) / 2) * dx for k in range(n)]
+        ax.plot(xs, [0.0] * n, "^", color="red", ms=11, mec="k", clip_on=False, zorder=5,
+                label="działko")
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="upper right", fontsize=7, framealpha=0.8)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y (wysokość)")
 
     images = []
     for step, grid, _extent in frames:
         image.set_data(grid)
         t = step * dt
         when = f"t = {t:.4f}" if dt < 1 else f"t = {t:.0f} s ({t / 60:.1f} min)"
-        ax.set_title(f"{title},  krok {step},  {when}")
+        firing = cannon_on and is_firing(t, params)
+        ax.set_title(f"{title},  krok {step},  {when}" + ("  STRZAŁ" if firing else ""),
+                     color="red" if firing else "black")
         fig.tight_layout()
         shot = figure_image(fig, buf, dpi)
         images.append(shot)
@@ -197,7 +218,7 @@ def main():
     source = DataSource(args.data, args.docker or None)
     params = source.read_params()
     dt = float(params.get("dt", 1.0))
-    fields = [parse_field(f) for f in args.field] or [("out", "stezenie", "viridis")]
+    fields = [parse_field(f) for f in args.field] or [("out", "stężenie", "viridis")]
 
     where = f"kontener {args.docker}:{args.data}" if args.docker else args.data
     print(f"czytam {where}")

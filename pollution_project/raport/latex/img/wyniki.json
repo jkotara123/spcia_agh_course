@@ -1,0 +1,69 @@
+{
+  "wznoszenie": {
+    "v_srodek": 5.171016223088971,
+    "v_czolo": 6.354247104247103,
+    "t_czolo_pod_inwersja": 0.116,
+    "t_uformowana": 0.14800000000000002
+  },
+  "miary": [
+    {
+      "wariant": "bez działka",
+      "run": "run_20261124_190253",
+      "start_t": null,
+      "pod_koniec": 0.21402625010275012,
+      "pod_srednia": 0.13345693403831654,
+      "pod_t017": 0.033399816728750004,
+      "ziemia_srednia": 0.13930879395642617,
+      "ziemia_max": 0.7274237343571429,
+      "calkowita_koniec": 0.2304449843587501,
+      "nad_koniec": 0.01641873425599999
+    },
+    {
+      "wariant": "start w czasie emisji",
+      "run": "run_20261124_190358",
+      "start_t": 0.005,
+      "pod_koniec": 0.2139538121268893,
+      "pod_srednia": 0.11671645698350225,
+      "pod_t017": 0.013689396702946522,
+      "ziemia_srednia": 0.1279236710130418,
+      "ziemia_max": 0.7274236755380006,
+      "calkowita_koniec": 0.22919895899473874,
+      "nad_koniec": 0.015245146867849446
+    },
+    {
+      "wariant": "start w trakcie wznoszenia",
+      "run": "run_20261124_190524",
+      "start_t": 0.07,
+      "pod_koniec": 0.21396864681667038,
+      "pod_srednia": 0.1236940356609531,
+      "pod_t017": 0.013440957327855727,
+      "ziemia_srednia": 0.13925499197151447,
+      "ziemia_max": 0.7274236718340441,
+      "calkowita_koniec": 0.23020767640842038,
+      "nad_koniec": 0.01623902959175
+    },
+    {
+      "wariant": "start po uformowaniu",
+      "run": "run_20261124_190649",
+      "start_t": 0.16,
+      "pod_koniec": 0.1491710621745448,
+      "pod_srednia": 0.12227424688991724,
+      "pod_t017": 0.028402718900492546,
+      "ziemia_srednia": 0.1317284573860561,
+      "ziemia_max": 0.7217384429905237,
+      "calkowita_koniec": 0.1734690621156605,
+      "nad_koniec": 0.0242979999411157
+    }
+  ],
+  "bilans": {
+    "zrodlo": 0.4698385061939103,
+    "inwersja": 0.11723659670060005,
+    "ziemia": 0.1189570042880001,
+    "M_koniec": 0.2304449843587501,
+    "M_bilans": 0.2336449052053101
+  },
+  "roznica": {
+    "krok": 25000,
+    "t": 0.25
+  }
+}

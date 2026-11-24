@@ -85,11 +85,12 @@ Bez kompilacji, np. `just run cannon_n=1 cannon_amp=120`:
 
 | Nazwa | Domyślnie | Co robi |
 |---|---|---|
-| `cannon_t` | 0.16 | chwila pierwszego strzału |
+| `cannon_t` | 0.07 | chwila pierwszego strzału (krok = t / 10⁻⁵) |
 | `cannon_amp` | 80 | siła (0 wyłącza działka) |
 | `cannon_x` | 0.5 | środek układu działek |
 | `cannon_n` | 1 | liczba działek |
 | `cannon_dx` | 0.3 | odstęp między działkami |
+| `cannon_shots` | 2 | liczba strzałów (po 0,03, co 0,06) |
 
 Siatki nie zmieniaj: krok czasu $10^{-5}$ jest dobrany do $40 \times 40$.
 
@@ -101,6 +102,7 @@ Siatki nie zmieniaj: krok czasu $10^{-5}$ jest dobrany do $40 \times 40$.
 | `just rebuild` | Kopiuje `pollution.cpp` i `pollution.hpp` do kontenera i kompiluje. |
 | `just run [nazwa=wartość ...]` | Nowy przebieg `przebiegi/run_<data>_<godzina>/` z `params.csv` i `log.txt`, wiersz w `przebiegi.csv`. |
 | `just gif [run] [opcje]` | `pollution.gif` i klatki PNG. Opcje: `--log` (skala logarytmiczna), `--vmax`, `--frames`. |
+| `python3 analiza.py bez=run_A emisja=run_B ...` | Wszystkie wykresy i liczby do raportu: działko w przestrzeni i czasie, wznoszenie chmury, miary, bilans masy. |
 | `just masa run_A run_B ...` | Ilość zanieczyszczenia przy ziemi i pod inwersją w czasie: `przebiegi/masa/masa.png` i `masa.csv`. |
 | `just przebiegi` | Tabela wszystkich przebiegów. |
 | `just shell` | Powłoka w kontenerze w katalogu ostatniego przebiegu. |
@@ -108,21 +110,21 @@ Siatki nie zmieniaj: krok czasu $10^{-5}$ jest dobrany do $40 \times 40$.
 
 ## Wyniki
 
-Ilość zanieczyszczenia $\int u$ na końcu przebiegu ($t = 0{,}3$), z `just masa`:
+Eksperyment: te same 2 strzały, różny tylko początek strzelania (szczegóły w raporcie).
 
-| Wariant | Pod inwersją | Przy ziemi, maksimum |
-|---|---|---|
-| bez działka | 0,213 | 0,210 |
-| 1 działko od $t = 0{,}16$ (domyślnie) | 0,119 (−44%) | 0,208 |
-| 1 działko od $t = 0$ | 0,137 (−36%) | 0,180 |
-| 3 działka (`cannon_n=3`) | 0,006 (−97%) | 0,203 |
+| Start strzelania | Stężenie przy ziemi, średnio | Pod inwersją, średnio | Pod inwersją na końcu |
+|---|---|---|---|
+| bez działka | 0,139 | 0,134 | 0,214 |
+| w czasie emisji ($t = 0{,}005$) | **0,128** | **0,117** | 0,214 |
+| w trakcie wznoszenia ($t = 0{,}07$) | 0,139 | 0,124 | 0,214 |
+| po uformowaniu ($t = 0{,}16$) | 0,132 | 0,122 | **0,149** |
 
-Czekanie, aż chmura się uformuje, daje najlepszy stan końcowy. Strzelanie od razu
-najbardziej obniża stężenie przy ziemi w czasie emisji.
+Odpowiedź jest warunkowa. Dla ludzi przy ziemi i dla pierwszej chmury nie warto czekać.
+Na stan końcowy wpływa tylko start po uformowaniu, bo jego strzały trafiają w drugą emisję.
 
-Równanie z zajęć ma adwekcję w postaci niezachowawczej ($b\,\partial u/\partial y$), więc
-część spadku to utrata masy w modelu, a nie tylko przeniesienie ponad inwersję.
-Szczegóły, wykresy i klatki są w raporcie: [`raport/raport_overleaf.zip`](raport/raport_overleaf.zip).
+Bilans masy zamyka się z dokładnością ok. 1,5%: emisja minus osiadanie na ziemi minus ubytek na inwersji.
+Ten ostatni wynika z niezachowawczej postaci adwekcji w równaniu z zajęć.
+Raport: [`raport/raport_overleaf.zip`](raport/raport_overleaf.zip).
 
 ## Struktura plików
 
@@ -133,6 +135,7 @@ pollution_project/
 ├── pollution.cpp    main: parametry z linii poleceń, params.csv
 ├── animate.py       .data z kontenera → pollution.gif, png/
 ├── masa.py          ilość zanieczyszczenia w warstwach dla kilku przebiegów
+├── analiza.py       wykresy i liczby do raportu
 ├── anim/            animacja pokazywana w tym README
 ├── przebiegi/       kolejne przebiegi i przebiegi.csv
 └── raport/          raport LaTeX + zip dla Overleafa

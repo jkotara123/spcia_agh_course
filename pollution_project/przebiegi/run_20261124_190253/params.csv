@@ -1,0 +1,2 @@
+N,p,dt,t_end,inversion_y,cannon_t,cannon_amp,cannon_x,cannon_n,cannon_dx,cannon_shots,cannon_period,cannon_duration,cannon_width,cannon_reach
+40,2,1e-5,0.3,0.8,0.07,0,0.5,1,0.3,2,0.06,0.03,0.08,1

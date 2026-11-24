@@ -24,11 +24,21 @@ private:
 public:
     // Patrz cannon(). cannon_amp = 0 wyłącza działko, cannon_t = 0 strzela od razu.
     // cannon_n działek co cannon_dx, symetrycznie wokół cannon_x (np. cannon_n=3: 0.2, 0.5, 0.8).
-    double cannon_t0 = 0.16;
+    // double cannon_t0 = 0.16;
+    double cannon_t0 = 0.07;
+
+    
     double cannon_amp = 80;
     double cannon_x = 0.5;
     int cannon_n = 1;
     double cannon_dx = 0.3;
+    int cannon_shots = 2;           // liczba strzałów; potem działko milknie
+
+    // Kształt i harmonogram strzału (patrz cannon()).
+    double cannon_width = 0.08;     // szerokość kolumny powietrza
+    double cannon_reach = 1.0;      // zasięg w pionie
+    double cannon_duration = 0.03;  // czas trwania impulsu (3000 kroków)
+    double cannon_period = 0.06;    // odstęp między początkami strzałów (6000 kroków)
 
     explicit heat_2d(const config_2d& config)
     : Base{config}
@@ -100,17 +110,13 @@ private:
 
     // Działko. Wynik jest dodawany do dTy.
     // dTy = -5.2 pod pokrywą inwersji (y < 0.8) i 0 nad nią, więc chmura
-    // dochodzi do y = 0.8 i staje. Ujemny impuls w wąskiej kolumnie nad armatą
-    // przedłuża ruch w górę przez pokrywę.
-    // Strzał dopiero po uformowaniu chmury: źródło gaśnie ok. t = 0.025,
-    // a dojście do pokrywy trwa ok. 0.8 / 5.2 ≈ 0.15.
-    double cannon_width = 0.08;
-    double cannon_reach = 1.0;
-    double cannon_duration = 0.03;
-    double cannon_period = 0.06;
-
+    // dochodzi do y = 0.8 i staje. Ujemny impuls w wąskiej kolumnie nad działkiem
+    // przyspiesza unoszenie i przedłuża je ponad pokrywę.
+    // cannon_shots impulsów sin trwających cannon_duration, co cannon_period, od cannon_t0.
     double cannon(double x, double y, double t) const {
         if (t < cannon_t0 || cannon_amp == 0.0)
+            return 0.0;
+        if (t - cannon_t0 >= cannon_shots * cannon_period)
             return 0.0;
         double phase = std::fmod(t - cannon_t0, cannon_period);
         if (phase >= cannon_duration)
