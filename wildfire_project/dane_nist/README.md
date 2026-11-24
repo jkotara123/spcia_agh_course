@@ -1,6 +1,6 @@
 # Dane o Camp Fire (8–9 XI 2018)
 
-Skąd są dane i jak je pobrać. Opis całego projektu: [README w głównym katalogu](../../README.md).
+Skąd są dane i jak je pobrać. Opis całego projektu: [README projektu](../README.md).
 Po zmianie któregoś pliku przelicz dane do modelu: `just dane`, potem `just rebuild` (z `wildfire_project`).
 
 Wszystko uruchamiamy z tego katalogu (`wildfire_project/dane_nist`), Pythonem z condy

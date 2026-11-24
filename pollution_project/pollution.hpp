@@ -23,9 +23,15 @@ private:
 
 public:
     // Patrz cannon(). cannon_amp = 0 wyłącza działko, cannon_t = 0 strzela od razu.
-    double cannon_t0 = 0.16;
+    // cannon_n działek co cannon_dx, symetrycznie wokół cannon_x (np. cannon_n=3: 0.2, 0.5, 0.8).
+    // double cannon_t0 = 0.16;
+    double cannon_t0 = 0.07;
+
+    
     double cannon_amp = 80;
     double cannon_x = 0.5;
+    int cannon_n = 1;
+    double cannon_dx = 0.3;
 
     explicit heat_2d(const config_2d& config)
     : Base{config}
@@ -43,9 +49,11 @@ public:
 
 private:
 
+    // Dół (y = 0): u = 0, bo unoszenie wnosi tędy powietrze do obszaru, a od ziemi napływa
+    // czyste powietrze. Bez tego warunku wartość przy ziemi stoi w miejscu i bez końca zasila chmurę.
+    // Góra (y = 1) i boki: naturalny warunek grad u . n = 0 jak na slajdach, nic nie znika.
     void prepare_matrices() {
         y.fix_left();
-        y.fix_right();
         Base::prepare_matrices();
     }
 
@@ -81,17 +89,15 @@ private:
         }
     }
 
-    double f(double h) {
-        if (h <= 0.125) return (150 - 1200 * h) * s;
+    // Źródło przy ziemi; y to wysokość punktu kwadratury (działa dla każdej siatki).
+    double f(double y) {
+        if (y <= 0.125) return (150 - 1200 * y) * s;
         return 0;
     }
 
-    double e2h(double e) {
-        return e / 40;
-    }
-
-    double dTy(double h) {
-      if (h >= 0.8) return 0;
+    // Gradient temperatury: unoszenie pod inwersją (y < 0.8), brak nad nią.
+    double dTy(double y) {
+      if (y >= 0.8) return 0;
       return -5.2;
     }
 
@@ -114,7 +120,11 @@ private:
             return 0.0;
         const double pi = 3.14159265358979;
         double pulse = std::sin(pi * phase / cannon_duration);
-        double column = std::exp(-std::pow((x - cannon_x) / cannon_width, 2));
+        double column = 0.0;
+        for (int k = 0; k < cannon_n; ++k) {
+            double xc = cannon_x + (k - (cannon_n - 1) / 2.0) * cannon_dx;
+            column += std::exp(-std::pow((x - xc) / cannon_width, 2));
+        }
         double reach = std::exp(-y / cannon_reach);
         return -cannon_amp * column * reach * pulse;
     }
@@ -136,10 +146,9 @@ private:
                     value_type u = eval_fun(u_prev, e, q);
 
                     double gradient_prod = k_x * u.dx * v.dx + k_y * u.dy * v.dy;
-                    double h = e2h(e[1]);
                     double val = u.val * v.val - steps.dt * gradient_prod
-                        + steps.dt * (dTy(h) + cannon(x, y, t)) * u.dy * v.val
-                        + steps.dt * f(h) * v.val;
+                        + steps.dt * (dTy(y) + cannon(x, y, t)) * u.dy * v.val
+                        + steps.dt * f(y) * v.val;
                     rhs(a[0], a[1]) += val * w * J;
                 }
             }

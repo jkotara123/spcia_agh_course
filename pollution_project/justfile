@@ -48,7 +48,7 @@ rebuild:
 
 #   just run cannon_t=0          strzał od początku
 #   just run cannon_amp=0        sama inwersja, bez działka
-# Nowy przebieg run_<data>_<godzina>. Parametry: cannon_t, cannon_amp, cannon_x
+# Nowy przebieg run_<data>_<godzina>. Parametry: cannon_t, cannon_amp, cannon_x, cannon_n, cannon_dx
 run *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -85,6 +85,10 @@ gif run="latest" *opts:
     set -euo pipefail
     name=$(docker exec {{container}} readlink -f "{{results}}/{{run}}" | xargs basename)
     {{python}} {{justfile_directory()}}/animate.py --docker {{container}} --data "{{results}}/$name" --out "{{runs}}/$name" {{opts}}
+
+# Ilość zanieczyszczenia w warstwach w czasie dla podanych przebiegów -> przebiegi/masa/masa.png, masa.csv
+masa +runs:
+    {{python}} {{justfile_directory()}}/masa.py --docker {{container}} --data {{results}} {{runs}}
 
 # Tabela wszystkich przebiegów (przebiegi/przebiegi.csv)
 przebiegi:

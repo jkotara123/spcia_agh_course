@@ -1,121 +1,139 @@
-# Usuwanie zanieczyszczeń w IGA-ADS
+<p align="center">
+  <a href="../README.md">Start</a> &nbsp;|&nbsp;
+  <a href="../wildfire_project/README.md">Pożar lasu</a> &nbsp;|&nbsp;
+  <b>Zanieczyszczenia</b>
+</p>
 
-Symulacja chmury zanieczyszczeń w bibliotece [IGA-ADS](https://github.com/marcinlos/iga-ads).
-Kod żyje w tym katalogu, a kompilacja i obliczenia idą w tym samym kontenerze `iga-ads-dev`
-co [`wildfire_project`](../wildfire_project). Katalogu `iga-ads` nie trzeba ruszać.
+# Usuwanie zanieczyszczeń falą uderzeniową
 
-**Stan:** `pollution.hpp` i `pollution.cpp` to na razie przykład `pollution_2d` z IGA-ADS
-(komin, wiatr o zmiennym kierunku). Dodane są tylko parametry z linii poleceń i `params.csv`.
-Kod z zajęć (inwersja termiczna) wstawia się w miejsce tych dwóch plików.
+Chmura pary wodnej z cząstkami zanieczyszczeń unosi się znad ziemi i zatrzymuje pod warstwą
+inwersji termicznej. Działko generujące fale uderzeniowe przebija inwersję i wypycha
+zanieczyszczenie w górę. Model z zajęć (Misan i in., ICCS 2022) w 2D w bibliotece
+[IGA-ADS](https://github.com/marcinlos/iga-ads).
 
-## Instalacja
+![animacja](anim/pollution.gif)
 
-Potrzebne:
-- Docker Desktop (uruchomiony) z włączoną integracją WSL
-  (*Settings → Resources → WSL integration*), żeby `docker` działał w WSL,
-- [`just`](https://github.com/casey/just),
-- Python 3 z `numpy`, `matplotlib` i `pillow`.
+## Spis treści
 
-**1. Obraz Dockera `iga-ads:latest`** (raz, wspólny z `wildfire_project`). Jeśli `docker images`
-już go pokazuje, ten krok pomiń.
-
-```bash
-git clone https://github.com/marcinlos/iga-ads.git --branch spciaa ~/iga-ads-spciaa
-cd ~/iga-ads-spciaa
-sed -i 's/podman/docker/g' justfile
-mv Containerfile Dockerfile
-sed -i 's/install-dependencies.sh,z/install-dependencies.sh/' Dockerfile
-just image
-```
-
-**2. Kontener i kompilacja.** Wszystkie komendy uruchamiaj z katalogu `pollution_project`:
-
-```bash
-cd pollution_project
-just kontener
-just rebuild
-```
-
-`just kontener` używa istniejącego kontenera `iga-ads-dev`, a jeśli go nie ma, zakłada nowy.
-Pierwsze `just rebuild` dopisuje przykład `pollution_spcia` do `examples/CMakeLists.txt`
-w kontenerze i kompiluje bibliotekę, więc trwa kilka minut. Każde następne kompiluje tylko ten przykład.
-
-**3. Python.** `just gif` uruchamia `python3`. Inny interpreter wskazujesz zmienną `PYTHON`.
+1. [Szybki start](#szybki-start)
+2. [Model](#model)
+3. [Działko](#działko)
+4. [Parametry](#parametry)
+5. [Komendy](#komendy)
+6. [Wyniki](#wyniki)
+7. [Struktura plików](#struktura-plików)
 
 ## Szybki start
 
+Instalacja obrazu Dockera jest opisana na [stronie startowej](../README.md#wspólne-przygotowanie).
+Komendy uruchamiaj z katalogu `pollution_project`:
+
 ```bash
+just kontener
+just rebuild
 just run
 just gif
 ```
 
-`just run` liczy nowy przebieg `run_<data>_<godzina>`, a `just gif` robi z ostatniego
-przebiegu `pollution.gif` i klatki PNG w `przebiegi/run_.../`.
+`just run` liczy przebieg (ok. 1,5 min), a `just gif` robi animację w `przebiegi/run_.../`.
 
-Próba z innymi parametrami (bez kompilacji):
+Porównanie z wariantem bez działka:
 
 ```bash
-just run wind_speed=8 diff=40
-just gif
+just run cannon_amp=0
 just przebiegi
+just masa run_<z działkiem> run_<bez działka>
 ```
+
+## Model
+
+Pole $u(x, y, t)$ to stężenie na kwadracie $[0, 1]^2$ ($y$ to wysokość):
+
+$$
+\frac{\partial u}{\partial t} + \Big(\frac{\partial T}{\partial y} + \mathrm{cannon}(x, y, t)\Big)\frac{\partial u}{\partial y}
+- K_x \frac{\partial^2 u}{\partial x^2} - K_y \frac{\partial^2 u}{\partial y^2} = f(y, t)
+$$
+
+- **Inwersja:** $\partial T/\partial y = -5{,}2$ dla $y < 0{,}8$ i $0$ powyżej. Nad $y = 0{,}8$ chmura przestaje się unosić.
+- **Dyfuzja:** $K_x = 1$, $K_y = 0{,}1$.
+- **Źródło przy ziemi:** $f = (150 - 1200y)\,s(t)$ dla $y \le 0{,}125$. Czynnik $s(t)$ włącza je dla
+  $t < 0{,}025$ i ponownie dla $t \in [0{,}175;\,0{,}225]$.
+- **Brzegi:** na dole $u = 0$ (od ziemi napływa czyste powietrze), na górze i po bokach $\nabla u \cdot n = 0$.
+- **Siatka i czas:** $40 \times 40$ elementów, splajny stopnia 2, jawny Euler, $\Delta t = 10^{-5}$, 30 000 kroków.
+
+## Działko
+
+$$
+\mathrm{cannon}(x, y, t) = -A \sum_{k=1}^{n} \exp\Big(-\frac{(x - x_k)^2}{w^2}\Big)\, e^{-y/L}\,
+\sin\Big(\pi \frac{\varphi}{\tau}\Big), \qquad \varphi = (t - t_0) \bmod P
+$$
+
+dla $t \ge t_0$ i $\varphi < \tau$, a poza tym 0.
+
+- **Impulsy.** Strzał trwa $\tau = 0{,}03$ i powtarza się co $P = 0{,}06$, jak wybuchy w generatorze fali uderzeniowej.
+- **Kolumna.** Działko działa w wąskim pasie wokół $x_k$ (szerokość $w = 0{,}08$).
+  Domyślnie jest jedno ($n = 1$, $x_1 = 0{,}5$); `cannon_n=3` dodaje kolejne co `cannon_dx`.
+- **Zasięg.** Siła maleje z wysokością ($L = 1$).
+- **Pierwszy strzał** w $t_0 = 0{,}16$, gdy chmura stoi już pod inwersją. Wcześniejsze strzelanie
+  usuwa mniej (patrz [Wyniki](#wyniki)).
+
+Kod: `cannon()` w [`pollution.hpp`](pollution.hpp), wynik jest dodawany do `dTy` w `compute_rhs`.
+
+## Parametry
+
+Bez kompilacji, np. `just run cannon_n=1 cannon_amp=120`:
+
+| Nazwa | Domyślnie | Co robi |
+|---|---|---|
+| `cannon_t` | 0.16 | chwila pierwszego strzału |
+| `cannon_amp` | 80 | siła (0 wyłącza działka) |
+| `cannon_x` | 0.5 | środek układu działek |
+| `cannon_n` | 1 | liczba działek |
+| `cannon_dx` | 0.3 | odstęp między działkami |
+
+Siatki nie zmieniaj: krok czasu $10^{-5}$ jest dobrany do $40 \times 40$.
 
 ## Komendy
 
 | Komenda | Co robi |
 |---|---|
-| `just kontener` | Uruchamia kontener `iga-ads-dev` albo zakłada go z obrazu `iga-ads:latest` i konfiguruje CMake. |
-| `just rebuild` | Kopiuje `pollution.cpp` i `pollution.hpp` do `/code/examples/pollution_spcia/` w kontenerze i kompiluje. Potrzebne po każdej zmianie kodu C++. |
-| `just run [nazwa=wartość ...]` | Nowy przebieg w kontenerze. Zapisuje `params.csv` i pełny log (`log.txt`) w `przebiegi/run_.../` i dopisuje wiersz do `przebiegi/przebiegi.csv`. |
-| `just gif [run] [opcje]` | `pollution.gif` i `png/pollution/*.png` w `przebiegi/<run>/`. Domyślnie ostatni przebieg. Opcje `animate.py`, np. `just gif latest --log`. |
+| `just kontener` | Uruchamia kontener `iga-ads-dev` albo zakłada go z obrazu `iga-ads:latest`. |
+| `just rebuild` | Kopiuje `pollution.cpp` i `pollution.hpp` do kontenera i kompiluje. |
+| `just run [nazwa=wartość ...]` | Nowy przebieg `przebiegi/run_<data>_<godzina>/` z `params.csv` i `log.txt`, wiersz w `przebiegi.csv`. |
+| `just gif [run] [opcje]` | `pollution.gif` i klatki PNG. Opcje: `--log` (skala logarytmiczna), `--vmax`, `--frames`. |
+| `just masa run_A run_B ...` | Ilość zanieczyszczenia przy ziemi i pod inwersją w czasie: `przebiegi/masa/masa.png` i `masa.csv`. |
 | `just przebiegi` | Tabela wszystkich przebiegów. |
 | `just shell` | Powłoka w kontenerze w katalogu ostatniego przebiegu. |
-| `just clean` | Usuwa z kontenera wszystkie przebiegi poza ostatnim. |
-| `just n=40 run` | Inna siatka (domyślnie `n=80`, `p=2`). |
+| `just clean` | Usuwa z kontenera dane wszystkich przebiegów poza ostatnim. |
 
-Opcje `animate.py` (po `just gif <run>`):
-- `--log`: logarytmiczna skala kolorów, dobra dla smugi, która szybko rzednie,
-- `--vmin`, `--vmax`: stały zakres kolorów (domyślnie 99,5 percentyl ze wszystkich klatek),
-- `--frames 60`: liczba klatek,
-- `--field temp:temperatura:inferno`: dodatkowe pole z plików `temp_<krok>.data`,
-  gdy kod zacznie je zapisywać (można podać kilka razy).
+## Wyniki
 
-## Przebiegi
+Ilość zanieczyszczenia $\int u$ na końcu przebiegu ($t = 0{,}3$), z `just masa`:
 
-```
-kontener:  /tmp/pollution/run_20261118_101500/   out_*.data, params.csv
-           /tmp/pollution/latest → run_20261118_101500
-
-host:      pollution_project/przebiegi/
-           ├── przebiegi.csv                      jeden wiersz na przebieg
-           └── run_20261118_101500/
-               ├── params.csv  log.txt            (just run)
-               └── pollution.gif  png/            (just gif)
-```
-
-## Parametry
-
-Są w `struct pollution_params` w `pollution.hpp`. Każdy można nadpisać w `just run nazwa=wartość`.
-Nowy parametr dodaje się w strukturze i w mapie `real` (albo `whole` dla liczb całkowitych)
-w `pollution.cpp`, potem `just rebuild`.
-
-| Nazwa | Domyślnie | Co robi |
+| Wariant | Pod inwersją | Przy ziemi, maksimum |
 |---|---|---|
-| `dt` | 10 | Krok czasu [s]. |
-| `t_end` | 6000 | Koniec symulacji [s]. |
-| `out_every` | 10 | Co ile kroków zapisywać `out_<krok>.data`. |
-| `wind_speed` | 5 | Prędkość wiatru [m/s], kierunek zmienia się w czasie. |
-| `diff` | 20 | Dyfuzja w x i y. |
-| `ambient` | 1e-6 | Stężenie tła [g/m³]. |
-| `src_x`, `src_y`, `src_r` | 3000, 400, 25 | Położenie i promień komina [m]. |
+| bez działka | 0,213 | 0,210 |
+| 1 działko od $t = 0{,}16$ (domyślnie) | 0,119 (−44%) | 0,208 |
+| 1 działko od $t = 0$ | 0,137 (−36%) | 0,180 |
+| 3 działka (`cannon_n=3`) | 0,006 (−97%) | 0,203 |
+
+Czekanie, aż chmura się uformuje, daje najlepszy stan końcowy. Strzelanie od razu
+najbardziej obniża stężenie przy ziemi w czasie emisji.
+
+Równanie z zajęć ma adwekcję w postaci niezachowawczej ($b\,\partial u/\partial y$), więc
+część spadku to utrata masy w modelu, a nie tylko przeniesienie ponad inwersję.
+Szczegóły, wykresy i klatki są w raporcie: [`raport/raport_overleaf.zip`](raport/raport_overleaf.zip).
 
 ## Struktura plików
 
 ```
 pollution_project/
-├── justfile        komendy (just --list)
-├── pollution.hpp   model: pollution_params, równania, zapis wyników
-├── pollution.cpp   main: czyta nazwa=wartość, zapisuje params.csv, uruchamia symulację
-├── animate.py      .data z kontenera → pollution.gif, png/
-└── przebiegi/      wyniki kolejnych przebiegów i przebiegi.csv
+├── justfile         komendy (just --list)
+├── pollution.hpp    model: źródło, inwersja, cannon(), compute_rhs
+├── pollution.cpp    main: parametry z linii poleceń, params.csv
+├── animate.py       .data z kontenera → pollution.gif, png/
+├── masa.py          ilość zanieczyszczenia w warstwach dla kilku przebiegów
+├── anim/            animacja pokazywana w tym README
+├── przebiegi/       kolejne przebiegi i przebiegi.csv
+└── raport/          raport LaTeX + zip dla Overleafa
 ```

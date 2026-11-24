@@ -1,0 +1,229 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[polish]{babel}
+\usepackage[margin=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+\lstset{
+  language=C++,
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  frame=single,
+  tabsize=4,
+  columns=fullflexible,
+  keepspaces=true,
+  backgroundcolor=\color{gray!8},
+  extendedchars=true,
+  literate={ą}{{\k{a}}}1 {ć}{{\'c}}1 {ę}{{\k{e}}}1 {ł}{{\l{}}}1 {ń}{{\'n}}1
+           {ó}{{\'o}}1 {ś}{{\'s}}1 {ź}{{\'z}}1 {ż}{{\.z}}1 {Ł}{{\L{}}}1
+           {Ź}{{\'Z}}1 {≈}{{$\approx$}}1
+}
+
+\title{Usuwanie zanieczyszczeń falą uderzeniową -- symulacja w IGA-ADS}
+\author{Rafał Szepieniec}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Model}
+
+Pole $u(x,y,t)$ to stężenie pary wodnej z cząstkami zanieczyszczeń na kwadracie
+$[0,1]^2$ ($x$ poziomo, $y$ wysokość). Równanie adwekcji--dyfuzji z zajęć:
+\[
+\frac{\partial u}{\partial t} + \Big(\frac{\partial T}{\partial y} + \mathrm{cannon}(x,y,t)\Big)\frac{\partial u}{\partial y}
+- K_x \frac{\partial^2 u}{\partial x^2} - K_y \frac{\partial^2 u}{\partial y^2} = f(y,t),
+\]
+z $K_x = 1$, $K_y = 0{,}1$ oraz gradientem temperatury
+$\partial T/\partial y = -5{,}2$ dla $y < 0{,}8$ i $0$ powyżej.
+Na wysokości $y = 0{,}8$ jest warstwa inwersji: unoszenie zanika, więc chmura się pod nią
+zatrzymuje. Źródło $f = (150 - 1200y)\,s(t)$ działa przy ziemi ($y \le 0{,}125$). Czynnik
+$s(t)$ włącza je dwa razy: dla $t < 0{,}025$ i dla $t \in [0{,}175;\,0{,}225]$.
+
+Warunki brzegowe:
+\begin{itemize}
+\item na dole $u = 0$: unoszenie wnosi tędy powietrze do obszaru, a od ziemi napływa czyste
+  powietrze;
+\item na górze i po bokach $\nabla u\cdot n = 0$, jak na slajdach.
+\end{itemize}
+
+Dyskretyzacja: $40\times40$ elementów, splajny stopnia 2, jawna metoda Eulera,
+$\Delta t = 10^{-5}$, 30\,000 kroków ($t \in [0;\,0{,}3]$), czas obliczeń ok.\ 1,5\,min.
+
+\section{Zmienione fragmenty kodu}
+
+Pełny kod jest w dodatku~\ref{sec:kod}. Zmiany względem kodu z zajęć:
+\begin{itemize}
+\item dodana funkcja \texttt{cannon(x, y, t)} (domyślnie jedno działko, opcjonalnie kilka) i jej wywołanie
+  w \texttt{compute\_rhs};
+\item wysokość w \texttt{f} i \texttt{dTy} brana z punktu kwadratury, a nie z numeru elementu,
+  więc model działa dla każdej siatki;
+\item na górnym brzegu warunek $\nabla u\cdot n = 0$ zamiast $u = 0$, więc zanieczyszczenie
+  nie znika przez górny brzeg;
+\item parametry działek podawane z linii poleceń i zapisywane do \texttt{params.csv}.
+\end{itemize}
+
+\paragraph{Warunki brzegowe.}
+\lstinputlisting[firstline=49,lastline=56]{kod/pollution.hpp}
+
+\paragraph{Źródło i inwersja.}
+\lstinputlisting[firstline=89,lastline=99]{kod/pollution.hpp}
+
+\paragraph{Działko.} Wynik jest dodawany do $\partial T/\partial y$.
+\lstinputlisting[firstline=101,lastline=127]{kod/pollution.hpp}
+
+\paragraph{Wywołanie w \texttt{compute\_rhs}.} Wartość działka w punkcie kwadratury
+$(x,y)$ = \texttt{point(e, q)} i chwili \texttt{t}:
+\lstinputlisting[firstline=129,lastline=153]{kod/pollution.hpp}
+
+\paragraph{Parametry z linii poleceń} (\texttt{pollution.cpp}):
+\lstinputlisting[firstline=23,lastline=45]{kod/pollution.cpp}
+
+\section{Wzór na działko}
+
+\[
+\mathrm{cannon}(x,y,t) = -A \sum_{k=1}^{n}
+\underbrace{\exp\!\Big(-\frac{(x - x_k)^2}{w^2}\Big)}_{\text{kolumna}}\;
+\underbrace{e^{-y/L}}_{\text{zasięg}}\;
+\underbrace{\sin\!\Big(\pi\,\frac{\varphi}{\tau}\Big)}_{\text{impuls}}, \qquad
+\varphi = (t - t_0) \bmod P,
+\]
+dla $t \ge t_0$ i $\varphi < \tau$, a poza tym $0$.
+
+\begin{center}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Symbol & Znaczenie & Wartość \\
+\midrule
+$A$ & siła wybuchu & 80 \\
+$n$ & liczba działek & 1 \\
+$x_1$ & położenie działka & 0,5 \\
+$w$ & szerokość kolumny & 0,08 \\
+$L$ & zasięg w pionie & 1,0 \\
+$\tau$ & czas trwania impulsu & 0,03 \\
+$P$ & okres strzałów & 0,06 \\
+$t_0$ & pierwszy strzał & 0,16 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Motywacja:
+\begin{itemize}
+\item Generator fali uderzeniowej (wybuch acetylenu, jeden strzał co ok.\ 10\,s) daje krótkie
+  impulsy pionowego ruchu powietrza, a nie stały nadmuch. Stąd impuls $\sin$ trwający $\tau$
+  i powtarzany co $P$. Między strzałami chmura może się ponownie ułożyć.
+\item Działko stoi w jednym miejscu na ziemi, więc wpływ jest ograniczony do wąskiej kolumny
+  (Gauss w $x$) i słabnie z wysokością ($e^{-y/L}$).
+\item Jedno działko czyści tylko pas wokół siebie. Wzór pozwala dodać kolejne ($n > 1$, co $\Delta x$); porównujemy to niżej.
+\item Ujemny składnik dodany do $\partial T/\partial y$ działa jak lokalne ,,odwrócenie''
+  inwersji: nad działkiem unoszenie trwa również powyżej $y = 0{,}8$, więc chmura przebija
+  warstwę inwersji.
+\end{itemize}
+W porównaniu ze wzorem z wykładu ($\cos 2\pi x \cos 2\pi y$ w kwadracie, zegar $\sin\cdot\cos$)
+nasz wzór ma wąską, gaussowską kolumnę i okresowe impulsy o stałej długości.
+
+\section{Czy czekać, aż chmura się uformuje?}
+
+Porównaliśmy cztery przebiegi. Rysunek~\ref{fig:masa} pokazuje ilość zanieczyszczenia
+$\int u$ przy ziemi i pod inwersją.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{img/masa.png}
+\caption{Ilość zanieczyszczenia przy ziemi ($y<0{,}3$) i pod inwersją ($y<0{,}8$).}
+\label{fig:masa}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Wariant & Pod inwersją na końcu & Nad inwersją na końcu & Przy ziemi, maksimum \\
+\midrule
+bez działka & 0,213 & 0,017 & 0,210 \\
+1 działko, od $t = 0{,}16$ & 0,119 ($-44\,\%$) & 0,034 & 0,208 \\
+1 działko, od $t = 0$ & 0,137 ($-36\,\%$) & 0,027 & 0,180 \\
+3 działka, od $t = 0{,}16$ & 0,006 ($-97\,\%$) & 0,028 & 0,203 \\
+\bottomrule
+\end{tabular}
+\caption{Ilość zanieczyszczenia $\int u$ w warstwach.}
+\end{table}
+
+Strzały po uformowaniu chmury zostawiają pod inwersją mniej zanieczyszczenia (0,119 wobec
+0,137). Wcześniej chmura jest jeszcze w ruchu i rozmyta, więc impulsy pchają w górę mniej
+materiału. Strzelanie od początku ma inną zaletę: obniża szczyt stężenia przy ziemi w czasie
+drugiej emisji (0,180 zamiast 0,208). Jeśli liczy się stan końcowy, warto poczekać.
+Jeśli liczy się ochrona ludzi przy ziemi w czasie emisji, lepiej strzelać od razu.
+
+Jedno działko czyści tylko pas wokół $x = 0{,}5$. Dla porównania trzy działka
+($x = 0{,}2;\ 0{,}5;\ 0{,}8$) usuwają spod inwersji prawie wszystko.
+
+\section{Wyniki}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{img/porownanie_dzialko.png}
+\caption{Bez działka (górny rząd) i z działkiem od $t = 0{,}16$ (dolny rząd), $t = 0{,}147$;
+$0{,}189$; $0{,}224$; $0{,}299$. Linia przerywana: inwersja $y = 0{,}8$.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.24\textwidth]{img/c_03500.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_07700.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_14700.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_16800.png}\\[2mm]
+\includegraphics[width=0.24\textwidth]{img/c_18900.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_22400.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_25900.png}\hfill
+\includegraphics[width=0.24\textwidth]{img/c_29900.png}
+\caption{Kroki czasowe z działkiem od $t = 0{,}16$ (kroki 3500, 7700, 14\,700, 16\,800,
+18\,900, 22\,400, 25\,900, 29\,900).}
+\end{figure}
+
+Pierwsza chmura unosi się i do $t \approx 0{,}15$ zatrzymuje pod inwersją. Od $t = 0{,}16$
+działko wypycha ją nad $x = 0{,}5$ ponad $y = 0{,}8$. Druga emisja ($t = 0{,}175$--$0{,}225$)
+tworzy pas przy ziemi, który nad działkiem wygina się do góry. Na końcu nad działkiem jest
+,,komin'', którym zanieczyszczenie przechodzi przez inwersję, a pod nim jest czysto.
+Po bokach chmura dalej stoi pod inwersją.
+
+\paragraph{Animacje} są w osobnych plikach w katalogu \texttt{anim/}:
+\texttt{bez\_dzialka.gif}, \texttt{jedno\_dzialko.gif}, \texttt{jedno\_dzialko\_od\_t0.gif}
+i \texttt{trzy\_dzialka.gif}.
+
+\section{Ograniczenia}
+
+\begin{itemize}
+\item Równanie z zajęć ma adwekcję w postaci $b\,\partial u/\partial y$, a nie
+  $\partial(b u)/\partial y$, więc nie zachowuje masy. Tam, gdzie prędkość unoszenia maleje
+  z wysokością (na inwersji i w kolumnie działka), część zanieczyszczenia znika z obszaru.
+  Dlatego z działkiem suma $\int u$ na końcu (0,15) jest mniejsza niż bez niego (0,23):
+  tylko część spadku pod inwersją to przeniesienie ponad nią. Porównanie wariantów
+  jest poprawne jakościowo, ale nie należy traktować liczb jako bilansu masy.
+\item Symulacja jest 2D, a na wykładzie 3D.
+\end{itemize}
+
+\begin{thebibliography}{9}
+\bibitem{misan} K. Misan i in., \emph{Fast isogeometric analysis simulations of a process of air
+  pollution removal by artificially generated shock waves}, LNCS 13352 (ICCS 2022) 298--311.
+\bibitem{ads} M. Łoś i in., \emph{IGA-ADS: Isogeometric analysis FEM using ADS solver},
+  Computer Physics Communications 217 (2017) 99--116.
+\end{thebibliography}
+
+\appendix
+\section{Kod}
+\label{sec:kod}
+
+\subsection*{pollution.hpp}
+\lstinputlisting{kod/pollution.hpp}
+
+\subsection*{pollution.cpp}
+\lstinputlisting{kod/pollution.cpp}
+
+\end{document}
